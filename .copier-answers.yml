@@ -1,0 +1,4 @@
+# Copier answers for the template itself
+# This file is used when updating the template
+_commit: HEAD
+_src_path: .

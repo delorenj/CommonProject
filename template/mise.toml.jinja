@@ -1,0 +1,62 @@
+# mise configuration for {{ project_name }}
+# https://mise.jdx.dev/configuration.html
+
+[env]
+_.file = ".env"
+
+{% if primary_language == 'python' %}
+[tools]
+python = "3.12"
+uv = "latest"
+
+[tasks.dev]
+description = "Start development server"
+run = "uv run python -m {{ project_slug | replace('-', '_') }}"
+
+[tasks.test]
+description = "Run tests"
+run = "uv run pytest"
+
+[tasks.lint]
+description = "Run linting"
+run = "uv run ruff check ."
+
+[tasks.format]
+description = "Format code"
+run = "uv run ruff format ."
+{% elif primary_language == 'typescript' %}
+[tools]
+node = "20"
+bun = "latest"
+
+[tasks.dev]
+description = "Start development server"
+run = "bun run dev"
+
+[tasks.test]
+description = "Run tests"
+run = "bun test"
+
+[tasks.lint]
+description = "Run linting"
+run = "bun run lint"
+
+[tasks.build]
+description = "Build for production"
+run = "bun run build"
+{% elif primary_language == 'rust' %}
+[tools]
+rust = "stable"
+
+[tasks.dev]
+description = "Run in development mode"
+run = "cargo run"
+
+[tasks.test]
+description = "Run tests"
+run = "cargo test"
+
+[tasks.build]
+description = "Build for production"
+run = "cargo build --release"
+{% endif %}

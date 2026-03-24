@@ -1,0 +1,98 @@
+# {{ project_name }} - Agent Context
+
+## Project Identity
+
+**Name**: {{ project_name }}
+**Type**: {{ project_type | replace('-', ' ') | title }}
+**Description**: {{ project_description }}
+
+{% if has_agent %}
+## Primary Agent
+
+**Agent Name**: {{ agent_name }}
+**Role**: {{ agent_role }}
+
+### Agent Capabilities
+{# Add capabilities based on project type #}
+{% if project_type == 'hardware' %}
+- Hardware monitoring and control
+- Voice/audio processing
+- Event emission for hardware state changes
+{% elif project_type == 'dashboard' %}
+- UI component generation
+- Data visualization
+- Real-time updates via WebSocket
+{% elif project_type == 'software' %}
+- Service orchestration
+- API request handling
+- Business logic execution
+{% elif project_type == 'tooling' %}
+- CLI command execution
+- Developer workflow automation
+- Code generation and analysis
+{% endif %}
+
+### Communication Patterns
+{% if uses_event_bus %}
+- **Inbound Events**: Listen for events on Bloodbank exchange
+- **Outbound Events**: Publish events for state changes and actions
+{% endif %}
+- **API Endpoints**: RESTful interfaces for external integrations
+{% endif %}
+
+## 33GOD Ecosystem Integration
+
+**Domain**: {{ component_domain | replace('-', ' ') | title }}
+**Workspace**: {{ plane_workspace }}
+
+### Dependencies
+{% if uses_event_bus %}
+- **Bloodbank**: Event bus for inter-component communication
+{% endif %}
+{% if additional_services %}
+- **Additional Services**: {{ additional_services }}
+{% endif %}
+
+### Event Contracts
+{% if uses_event_bus %}
+#### Emitted Events
+- `{{ project_slug }}.status.changed` - Component status updates
+- `{{ project_slug }}.error.occurred` - Error notifications
+{# Add more based on project type #}
+
+#### Consumed Events
+- `system.shutdown.requested` - Graceful shutdown signal
+- `system.config.updated` - Configuration changes
+{% endif %}
+
+## Development Context
+
+### Ticket Management
+- **Project Identifier**: {{ project_identifier }}
+- **Plane Project ID**: {{ plane_project_id }}
+- All work tracked in Plane: https://plane.delo.sh/{{ plane_workspace }}/
+
+### Technology Stack
+- **Primary Language**: {{ primary_language | title }}
+{% if uses_docker %}
+- **Containerization**: Docker + Docker Compose
+{% endif %}
+- **Environment Management**: mise
+- **Methodology**: BMAD (Business Method for Agile Development)
+
+{% if has_hardware %}
+### Hardware Context
+- **Platform**: {{ hardware_platform }}
+- **Access**: `ssh {{ hardware_hostname }}`
+{% if hardware_peripherals %}
+- **Peripherals**: {{ hardware_peripherals }}
+{% endif %}
+{% endif %}
+
+## Critical Rules
+
+1. **No Code Without Ticket**: All changes must reference active Plane ticket
+2. **BMAD Adherence**: Follow BMAD patterns for all development tasks
+3. **Event Contracts**: Document all Bloodbank events in GOD.md
+4. **Testing Required**: All features must include validation
+5. **Documentation Sync**: Keep BMAD docs and Plane boards aligned

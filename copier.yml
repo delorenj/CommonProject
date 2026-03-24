@@ -1,0 +1,169 @@
+# Copier Template Configuration for 33GOD Component Projects
+# https://copier.readthedocs.io/
+
+_min_copier_version: "9.0.0"
+
+# Metadata
+_subdirectory: template
+_templates_suffix: .jinja
+_envops:
+  block_start_string: "{%"
+  block_end_string: "%}"
+  variable_start_string: "{{"
+  variable_end_string: "}}"
+  comment_start_string: "{#"
+  comment_end_string: "#}"
+
+# Questions (asked in order)
+
+user_name:
+  type: str
+  help: Your name (used in BMAD config and commit attribution)
+  default: Jarad
+
+user_skill_level:
+  type: str
+  help: Your skill level (affects BMAD agent behavior)
+  default: intermediate
+  choices:
+    - beginner: New to development
+    - intermediate: Comfortable with most tasks
+    - advanced: Deep expertise, minimal hand-holding
+
+project_name:
+  type: str
+  help: What is the project name? (e.g., HoloCron, VernonVoice, ChoreScore)
+  validator: "{% if not project_name %}Required{% endif %}"
+
+project_slug:
+  type: str
+  help: Project directory name (lowercase, hyphens)
+  default: "{{ project_name | lower | replace(' ', '-') }}"
+
+project_description:
+  type: str
+  help: Brief project description (one sentence)
+  default: ""
+
+# Project Type Selection
+project_type:
+  type: str
+  help: What type of 33GOD component is this?
+  default: software
+  choices:
+    - software: Pure software component (API, service, agent)
+    - hardware: Hardware-integrated component (voice assistant, IoT device)
+    - dashboard: Dashboard/UI component (React, Vue, etc.)
+    - tooling: Developer tooling or CLI
+
+# Hardware-specific questions (only asked if project_type == hardware)
+has_hardware:
+  type: bool
+  help: Does this project interface with physical hardware?
+  default: "{{ project_type == 'hardware' }}"
+  when: "{{ project_type == 'hardware' }}"
+
+hardware_platform:
+  type: str
+  help: Primary hardware platform (e.g., Raspberry Pi Zero 2 W, ESP32, Arduino)
+  default: ""
+  when: "{{ has_hardware }}"
+
+hardware_hostname:
+  type: str
+  help: SSH hostname for hardware access (e.g., mydevice.local)
+  default: "{{ project_slug }}.local"
+  when: "{{ has_hardware }}"
+
+hardware_peripherals:
+  type: str
+  help: List key hardware peripherals (comma-separated, e.g., ReSpeaker 2-mic HAT, Camera Module)
+  default: ""
+  when: "{{ has_hardware }}"
+
+# Agent Configuration
+has_agent:
+  type: bool
+  help: Does this component have a dedicated AI agent?
+  default: true
+
+agent_name:
+  type: str
+  help: Agent name (e.g., HoloCron, Vernon, Sparky)
+  default: "{{ project_name }}"
+  when: "{{ has_agent }}"
+
+agent_role:
+  type: str
+  help: Agent role/purpose (e.g., Voice Assistant, Code Reviewer, Project Manager)
+  default: ""
+  when: "{{ has_agent }}"
+
+# Plane Integration
+plane_workspace:
+  type: str
+  help: Plane workspace slug (e.g., 33god)
+  default: 33god
+
+plane_project_id:
+  type: str
+  help: Plane project ID (found in project settings)
+  validator: "{% if not plane_project_id %}Required{% endif %}"
+
+project_identifier:
+  type: str
+  help: Plane project identifier (e.g., TONY, HOLO, VERN)
+  validator: "{% if not project_identifier or project_identifier|length < 2 %}Must be 2+ characters{% endif %}"
+
+# Technical Stack
+primary_language:
+  type: str
+  help: Primary programming language
+  default: python
+  choices:
+    - python: Python (FastAPI, uv)
+    - typescript: TypeScript (Node.js, bun)
+    - rust: Rust (cargo)
+    - mixed: Multiple languages
+
+uses_docker:
+  type: bool
+  help: Use Docker/containerization?
+  default: true
+
+uses_event_bus:
+  type: bool
+  help: Integrate with Bloodbank event bus?
+  default: true
+
+# Additional Services
+additional_services:
+  type: str
+  help: Additional services needed (comma-separated, e.g., postgres, redis, qdrant)
+  default: ""
+
+# Repository Configuration
+git_remote_url:
+  type: str
+  help: Git remote URL (leave empty to skip)
+  default: ""
+
+# GOD Document Options
+initialize_god_docs:
+  type: bool
+  help: Initialize GOD documentation structure?
+  default: true
+
+component_domain:
+  type: str
+  help: Which 33GOD domain does this belong to?
+  default: custom
+  choices:
+    - infrastructure: Infrastructure Services
+    - agent-orchestration: Agent Orchestration
+    - workspace-management: Workspace Management
+    - meeting-collaboration: Meeting & Collaboration
+    - dashboards-voice: Dashboards & Voice
+    - development-tools: Development Tools
+    - custom: Custom/Other
+  when: "{{ initialize_god_docs }}"

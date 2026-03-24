@@ -1,0 +1,234 @@
+# {{ project_name }} GOD Document
+
+**Generated**: {{ _copier_conf.now() }}
+**Component Type**: {{ project_type | replace('-', ' ') | title }}
+**Domain**: {{ component_domain | replace('-', ' ') | title }}
+
+## Component Overview
+
+{{ project_description }}
+
+**Key Responsibilities**:
+{% if project_type == 'hardware' %}
+- Hardware monitoring and control
+- Physical device integration
+- Sensor data collection and processing
+{% elif project_type == 'dashboard' %}
+- Data visualization and presentation
+- Real-time UI updates
+- User interaction handling
+{% elif project_type == 'software' %}
+- Business logic execution
+- API endpoint management
+- Service orchestration
+{% elif project_type == 'tooling' %}
+- Developer workflow automation
+- CLI command processing
+- Code generation and transformation
+{% endif %}
+
+## Architecture
+
+### Technical Stack
+- **Language**: {{ primary_language | title }}
+{% if uses_docker %}
+- **Deployment**: Containerized (Docker)
+{% endif %}
+{% if uses_event_bus %}
+- **Communication**: Event-driven via Bloodbank
+{% endif %}
+
+### Dependencies
+{% if uses_event_bus %}
+- **Bloodbank** (RabbitMQ): Event bus for inter-component communication
+{% endif %}
+{% if additional_services %}
+{% for service in additional_services.split(',') %}
+- **{{ service.strip() | title }}**: [Add purpose]
+{% endfor %}
+{% endif %}
+
+{% if uses_event_bus %}
+## Event Contracts
+
+### Emitted Events
+
+#### `{{ project_slug }}.status.changed`
+**Purpose**: Component status updates
+**Payload**:
+```json
+{
+  "component": "{{ project_slug }}",
+  "status": "ready|busy|error|offline",
+  "timestamp": "ISO8601",
+  "metadata": {}
+}
+```
+
+#### `{{ project_slug }}.error.occurred`
+**Purpose**: Error notifications
+**Payload**:
+```json
+{
+  "component": "{{ project_slug }}",
+  "error_type": "string",
+  "message": "string",
+  "timestamp": "ISO8601",
+  "context": {}
+}
+```
+
+{# Add project-type specific events #}
+{% if project_type == 'hardware' %}
+#### `{{ project_slug }}.hardware.reading`
+**Purpose**: Hardware sensor readings
+**Payload**:
+```json
+{
+  "sensor": "string",
+  "value": "number|string",
+  "unit": "string",
+  "timestamp": "ISO8601"
+}
+```
+{% elif project_type == 'dashboard' %}
+#### `{{ project_slug }}.ui.interaction`
+**Purpose**: User interaction tracking
+**Payload**:
+```json
+{
+  "action": "string",
+  "component": "string",
+  "user_id": "string",
+  "timestamp": "ISO8601"
+}
+```
+{% endif %}
+
+### Consumed Events
+
+#### `system.shutdown.requested`
+**Purpose**: Graceful shutdown signal
+**Handler**: Cleanup resources and close connections
+
+#### `system.config.updated`
+**Purpose**: Configuration changes
+**Handler**: Reload configuration and apply changes
+{% endif %}
+
+{% if has_hardware %}
+## Hardware Integration
+
+### Platform
+{{ hardware_platform }}
+
+### Peripherals
+{% if hardware_peripherals %}
+{% for peripheral in hardware_peripherals.split(',') %}
+- {{ peripheral.strip() }}
+{% endfor %}
+{% endif %}
+
+### Access
+```bash
+ssh {{ hardware_hostname }}
+```
+{% endif %}
+
+## Development Guidelines
+
+### Testing Requirements
+- Unit tests for all business logic
+- Integration tests for event handlers
+{% if has_hardware %}
+- Hardware mock tests for CI/CD
+{% endif %}
+- End-to-end tests for critical paths
+
+### Code Standards
+{% if primary_language == 'python' %}
+- Follow PEP 8 style guidelines
+- Use type hints for all functions
+- Pydantic models for data validation
+{% elif primary_language == 'typescript' %}
+- Strict TypeScript mode enabled
+- ESLint + Prettier for consistency
+- Interface-first design
+{% elif primary_language == 'rust' %}
+- Clippy for linting
+- rustfmt for formatting
+- Zero unsafe code unless justified
+{% endif %}
+
+### Documentation
+- Update GOD.md when adding/changing events
+- Document all public APIs
+- Maintain CLAUDE.md accuracy
+
+## Deployment
+
+{% if uses_docker %}
+### Container Deployment
+```bash
+# Build and start
+docker compose up -d --build
+
+# View logs
+docker compose logs -f {{ project_slug }}
+
+# Stop services
+docker compose down
+```
+{% endif %}
+
+{% if has_hardware %}
+### Hardware Deployment
+```bash
+# SSH to device
+ssh {{ hardware_hostname }}
+
+# Pull latest code
+git pull origin main
+
+# Restart service
+sudo systemctl restart {{ project_slug }}
+```
+{% endif %}
+
+## Monitoring and Observability
+
+### Health Check
+- **Endpoint**: `/health`
+- **Expected Response**: `{"status": "healthy", "version": "x.y.z"}`
+
+### Metrics
+{% if uses_event_bus %}
+- Event publish/consume rates
+- Event processing latency
+{% endif %}
+- Error rates by type
+- Resource utilization (CPU, memory)
+{% if has_hardware %}
+- Hardware sensor readings
+{% endif %}
+
+### Logging
+- Structured JSON logs
+- Log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
+- Correlation IDs for request tracing
+
+## Troubleshooting
+
+### Common Issues
+
+**Issue**: [Describe common issue]
+**Solution**: [Describe solution]
+
+**Issue**: [Describe common issue]
+**Solution**: [Describe solution]
+
+## References
+
+- **Plane Project**: https://plane.delo.sh/{{ plane_workspace }}/projects/{{ plane_project_id }}
+- **33GOD System GOD**: `../GOD.md`
+- **Domain GOD**: `../domains/{{ component_domain }}/GOD.md`

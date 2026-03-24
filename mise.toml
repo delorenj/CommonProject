@@ -1,0 +1,3 @@
+[env]
+_.file = [".env"]
+CODEX_HOME = { value = ".codex", path = true }

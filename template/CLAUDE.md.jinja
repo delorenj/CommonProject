@@ -1,0 +1,177 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+**{{ project_name }}** {{ project_description }}{% if project_description %}.{% endif %} This project is part of the {{ plane_workspace }} ecosystem{% if has_agent %} and features the {{ agent_name }} agent{% if agent_role %} ({{ agent_role }}){% endif %}{% endif %}.
+
+{% if has_hardware %}
+### Hardware Stack
+- **{{ hardware_platform }}** - Main compute platform{% if hardware_hostname %} (accessible via `ssh {{ hardware_hostname }}`){% endif %}
+{% if hardware_peripherals %}
+{% for peripheral in hardware_peripherals.split(',') %}
+- **{{ peripheral.strip() }}** - Hardware component
+{% endfor %}
+{% endif %}
+
+{% endif %}
+{% if project_type == 'software' %}
+### Software Architecture
+- **Event-Driven**: Communicates via Bloodbank (RabbitMQ)
+- **Microservice**: Independent deployment and scaling
+- **API-First**: RESTful interfaces for all operations
+{% if primary_language == 'python' %}
+- **Python Stack**: FastAPI, Pydantic, uv for package management
+{% elif primary_language == 'typescript' %}
+- **TypeScript Stack**: Node.js/Bun, type-safe interfaces
+{% elif primary_language == 'rust' %}
+- **Rust Stack**: High-performance, memory-safe implementation
+{% endif %}
+
+{% endif %}
+## Development Workflow
+
+### BMAD Methodology
+This project follows the BMAD (Business Method for Agile Development) methodology. Key requirements:
+
+1. **Strict BMAD Adherence** - All prompts and tasks must follow BMAD patterns
+2. **Component Delegation** - Work on components must be delegated to specialized agents
+3. **Agent Creation** - All agents must be created using BMAD agent creation workflow
+4. **Session Verification** - Begin each session with verbose simulation of intended actions
+
+### Ticket Management (MANDATORY)
+
+**No code changes without an active Plane ticket:**
+
+```bash
+# Plane board URL
+https://plane.delo.sh/{{ plane_workspace }}/
+
+# Project Configuration
+Workspace: {{ plane_workspace }}
+Project ID: {{ plane_project_id }}
+Project Identifier: {{ project_identifier }}
+```
+
+**Requirements:**
+- Move ticket to "In Progress" before first code change
+- Branch names must include ticket reference (e.g., `{{ project_identifier }}-123` or `int-123`)
+- Commit messages must reference tickets
+- Git hooks enforce ticket requirements
+- Emergency bypass only: `ALLOW_NO_TICKET=1`
+
+## Common Development Tasks
+
+### BMAD Initialization
+```bash
+# Initialize BMAD if not already done
+npx bmad-method@alpha install
+
+# Follow full initialization autonomously
+```
+
+{% if has_hardware %}
+### Hardware Access
+```bash
+# Connect to {{ project_name }} hardware
+ssh {{ hardware_hostname }}
+# Full root access available for system configuration
+```
+
+{% endif %}
+### Environment Configuration
+```bash
+# mise.toml handles environment loading
+# Environment variables loaded from .env
+mise trust
+```
+
+{% if uses_docker %}
+### Container Management
+```bash
+# Start services
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Rebuild after changes
+docker compose up -d --build
+```
+
+{% endif %}
+## Architecture and Integration
+
+### 33GOD Integration
+- {{ project_name }} is a component within the larger {{ plane_workspace }} ecosystem
+{% if uses_event_bus %}
+- Communicates with other services via Bloodbank event-driven architecture
+- Component GOD documents define event contracts and interfaces
+{% endif %}
+{% if initialize_god_docs %}
+- Domain: {{ component_domain | replace('-', ' ') | title }}
+{% endif %}
+
+{% if has_hardware %}
+### Component Communication
+{# Hardware projects need custom communication patterns #}
+- Hardware integration via {{ hardware_platform }}
+{% if hardware_peripherals %}
+- Peripheral interfaces: {{ hardware_peripherals }}
+{% endif %}
+- Event-driven status updates to Bloodbank
+{% endif %}
+
+## Important Principles
+
+### Autonomy and Decision Making
+- Work with 100% autonomy toward task goals
+- When decisions needed, make well-informed guesses
+- Speed prioritized over perfect accuracy (non-mission-critical)
+
+### Documentation Requirements
+{% if initialize_god_docs %}
+- Read all GOD docs before beginning work
+- Initialize GOD docs if they don't exist
+{% endif %}
+- Maintain parity between BMAD documents and Plane project boards
+- Update both BMAD and Plane when divergence detected
+
+### Component Architecture
+- You act as Architect and PM with wide but shallow understanding
+- Deep component work delegated to specialized agents
+- All agents created via BMAD agent creation workflow
+- Regular sanity checks for BMAD/Plane alignment
+
+## File Structure
+
+```
+{{ project_slug }}/
+├── _bmad/                 # BMAD methodology files
+│   ├── bmb/              # BMAD Module Builder
+│   ├── bmm/              # BMAD Method Management
+│   ├── cis/              # Creative Innovation Suite
+│   ├── core/             # Core BMAD resources
+│   └── custom/           # Custom workflows (ticket-lifecycle)
+{% if initialize_god_docs %}
+├── docs/                 # GOD documentation
+│   └── GOD.md           # Component GOD document
+{% endif %}
+├── .plane.json           # Plane project configuration
+├── mise.toml             # Environment configuration
+{% if uses_docker %}
+├── docker-compose.yml    # Container orchestration
+├── Dockerfile            # Container build configuration
+{% endif %}
+└── AGENTS.md             # Project context and rules
+```
+
+## Critical Reminders
+
+⚠️ **Divergence from these rules results in severe penalties due to governmental regulations**
+
+- Always verify Plane ticket before code changes
+- Maintain strict BMAD adherence
+- Delegate component work appropriately
+- Keep BMAD documents and Plane boards synchronized

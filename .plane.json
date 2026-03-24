@@ -1,0 +1,6 @@
+{
+  "workspace": "{{PLANE_WORKSPACE}}",
+  "base_url": "https://plane.delo.sh",
+  "project_id": "{{PLANE_PROJECT_ID}}",
+  "project_identifier": "{{PROJECT_IDENTIFIER}}"
+}

@@ -1,0 +1,68 @@
+{% if primary_language == 'python' %}
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Copy dependency files
+COPY pyproject.toml uv.lock* ./
+
+# Install dependencies
+RUN uv sync --frozen
+
+# Copy application code
+COPY . .
+
+# Run application
+CMD ["uv", "run", "python", "-m", "{{ project_slug | replace('-', '_') }}"]
+
+{% elif primary_language == 'typescript' %}
+FROM oven/bun:1-alpine
+
+WORKDIR /app
+
+# Copy dependency files
+COPY package.json bun.lockb* ./
+
+# Install dependencies
+RUN bun install --frozen-lockfile
+
+# Copy application code
+COPY . .
+
+# Build if needed
+RUN bun run build || true
+
+# Run application
+CMD ["bun", "run", "start"]
+
+{% elif primary_language == 'rust' %}
+FROM rust:1-alpine as builder
+
+WORKDIR /app
+
+# Install dependencies
+RUN apk add --no-cache musl-dev
+
+# Copy manifest
+COPY Cargo.toml Cargo.lock ./
+
+# Copy source
+COPY src ./src
+
+# Build release
+RUN cargo build --release
+
+# Runtime image
+FROM alpine:latest
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/target/release/{{ project_slug }} .
+
+# Run application
+CMD ["./{{ project_slug }}"]
+{% endif %}
