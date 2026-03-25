@@ -54,5 +54,6 @@ _tasks:
   - "chmod +x .scripts/setup-plane.sh .mise/tasks/setup 2>/dev/null || true"
   - "python3 .scripts/setup-plane.sh"
   - "git init"
+  - "mise trust"
   - "git add -A"
   - "ALLOW_NO_TICKET=1 git commit -m 'Initial commit'"
