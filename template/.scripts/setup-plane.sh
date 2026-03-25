@@ -1,76 +1,74 @@
-#!/usr/bin/env bash
-# Creates a Plane project in the 33god workspace and writes .plane.json
-set -euo pipefail
+#!/usr/bin/env python3
+"""Creates a Plane project in the 33god workspace and writes .plane.json"""
+import json
+import os
+import re
+import sys
+import urllib.request
+import urllib.error
 
-PROJECT_NAME="${1:?Usage: setup-plane.sh <project_name> [description]}"
-PROJECT_DESC="${2:-}"
-PLANE_API="https://plane.delo.sh/api/v1"
-WORKSPACE="33god"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_FILE = os.path.join(SCRIPT_DIR, "project-data.json")
+PLANE_API = "https://plane.delo.sh/api/v1"
+WORKSPACE = "33god"
 
-# Derive identifier: first 4 chars of name, uppercased, alphanumeric only
-IDENTIFIER=$(echo "${PROJECT_NAME}" | tr -cd '[:alnum:]' | head -c4 | tr '[:lower:]' '[:upper:]')
-[ ${#IDENTIFIER} -lt 2 ] && IDENTIFIER="${IDENTIFIER}XX"
 
-# Check for API key
-if [ -z "${PLANE_33GOD_API_KEY:-}" ]; then
-    echo "WARNING: PLANE_33GOD_API_KEY not set. Writing placeholder .plane.json"
-    echo "  Set the key and re-run: bash .scripts/setup-plane.sh '${PROJECT_NAME}' '${PROJECT_DESC}'"
-    cat > .plane.json <<EOF
-{
-  "workspace": "${WORKSPACE}",
-  "project_id": "PLACEHOLDER",
-  "project_identifier": "${IDENTIFIER}"
-}
-EOF
-    exit 0
-fi
+def write_plane_json(workspace, project_id, identifier):
+    with open(".plane.json", "w") as f:
+        json.dump(
+            {"workspace": workspace, "project_id": project_id, "project_identifier": identifier},
+            f,
+            indent=2,
+        )
+        f.write("\n")
 
-# Create project via Plane API
-RESPONSE=$(curl -s -w "\n%{http_code}" \
-    -X POST "${PLANE_API}/workspaces/${WORKSPACE}/projects/" \
-    -H "X-API-Key: ${PLANE_33GOD_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "{
-        \"name\": \"${PROJECT_NAME}\",
-        \"description\": \"${PROJECT_DESC}\",
-        \"identifier\": \"${IDENTIFIER}\",
-        \"network\": 2
-    }" 2>/dev/null)
 
-HTTP_CODE=$(echo "${RESPONSE}" | tail -1)
-BODY=$(echo "${RESPONSE}" | sed '$d')
+def main():
+    with open(DATA_FILE) as f:
+        data = json.load(f)
 
-if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 300 ]; then
-    PROJECT_ID=$(echo "${BODY}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
-    ACTUAL_IDENT=$(echo "${BODY}" | python3 -c "import sys,json; print(json.load(sys.stdin)['identifier'])" 2>/dev/null || echo "${IDENTIFIER}")
+    name = data["project_name"]
+    desc = data.get("project_description", "")
 
-    if [ -n "${PROJECT_ID}" ]; then
-        cat > .plane.json <<EOF
-{
-  "workspace": "${WORKSPACE}",
-  "project_id": "${PROJECT_ID}",
-  "project_identifier": "${ACTUAL_IDENT}"
-}
-EOF
-        echo "Plane project created: ${ACTUAL_IDENT} (${PROJECT_ID})"
-    else
-        echo "WARNING: Could not parse project ID from response. Writing placeholder."
-        cat > .plane.json <<EOF
-{
-  "workspace": "${WORKSPACE}",
-  "project_id": "PLACEHOLDER",
-  "project_identifier": "${IDENTIFIER}"
-}
-EOF
-    fi
-else
-    echo "WARNING: Plane API returned ${HTTP_CODE}. Writing placeholder .plane.json"
-    echo "  Response: ${BODY}"
-    cat > .plane.json <<EOF
-{
-  "workspace": "${WORKSPACE}",
-  "project_id": "PLACEHOLDER",
-  "project_identifier": "${IDENTIFIER}"
-}
-EOF
-fi
+    # Derive identifier: first 4 alphanumeric chars, uppercased
+    identifier = re.sub(r"[^A-Za-z0-9]", "", name)[:4].upper()
+    if len(identifier) < 2:
+        identifier += "XX"
+
+    api_key = os.environ.get("PLANE_33GOD_API_KEY", "")
+    if not api_key:
+        print("WARNING: PLANE_33GOD_API_KEY not set. Writing placeholder .plane.json")
+        print("  Set the key and re-run: python3 .scripts/setup-plane.sh")
+        write_plane_json(WORKSPACE, "PLACEHOLDER", identifier)
+        return
+
+    payload = json.dumps({"name": name, "description": desc, "identifier": identifier, "network": 2}).encode()
+
+    req = urllib.request.Request(
+        f"{PLANE_API}/workspaces/{WORKSPACE}/projects/",
+        data=payload,
+        headers={"X-API-Key": api_key, "Content-Type": "application/json", "User-Agent": "CommonProject/1.0", "Accept": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read())
+            project_id = body.get("id", "PLACEHOLDER")
+            actual_ident = body.get("identifier", identifier)
+            write_plane_json(WORKSPACE, project_id, actual_ident)
+            print(f"Plane project created: {actual_ident} ({project_id})")
+    except urllib.error.HTTPError as e:
+        print(f"WARNING: Plane API returned {e.code}. Writing placeholder .plane.json")
+        try:
+            print(f"  Response: {e.read().decode()}")
+        except Exception:
+            pass
+        write_plane_json(WORKSPACE, "PLACEHOLDER", identifier)
+    except Exception as e:
+        print(f"WARNING: Plane API request failed: {e}. Writing placeholder .plane.json")
+        write_plane_json(WORKSPACE, "PLACEHOLDER", identifier)
+
+
+if __name__ == "__main__":
+    main()

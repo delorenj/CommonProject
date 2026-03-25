@@ -52,7 +52,7 @@ user_skill_level:
 _tasks:
   - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
   - "chmod +x .scripts/setup-plane.sh .mise/tasks/setup 2>/dev/null || true"
-  - "bash .scripts/setup-plane.sh '{{ project_name }}' '{{ project_description }}'"
+  - "python3 .scripts/setup-plane.sh"
   - "git init"
   - "git add -A"
-  - "git commit -m 'Initial commit'"
+  - "ALLOW_NO_TICKET=1 git commit -m 'Initial commit'"
