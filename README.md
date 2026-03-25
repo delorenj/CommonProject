@@ -23,9 +23,36 @@ uv tool install copier
 
 # Or with pip
 pip install copier
+
+# Set up Plane API key (for automated project creation)
+export PLANE_API_KEY="your-plane-api-key"
+# Get from: https://plane.delo.sh/<workspace>/settings/api-tokens/
 ```
 
 ## Quick Start
+
+### Option 1: Automated Init (Recommended)
+
+One command handles everything: Plane project creation + Copier template:
+
+```bash
+# Interactive wizard - creates Plane project automatically
+mise run init-project
+
+# Or non-interactive (uses defaults)
+mise run init-project-non-interactive
+
+# With custom template
+./scripts/init-project.sh --template gh:delorenj/CommonProject
+```
+
+The wizard will:
+1. Ask for project details (name, description, type)
+2. Create the Plane project automatically
+3. Run Copier with all answers pre-filled
+4. Output next steps
+
+### Option 2: Manual Copier
 
 ```bash
 # Create new project from template
@@ -103,6 +130,8 @@ my-new-project/
 
 ## Post-Generation Steps
 
+> **Tip:** If you used `mise run init-project`, most of this is done automatically!
+
 1. **Initialize Environment**
    ```bash
    cd my-new-project
@@ -120,9 +149,9 @@ my-new-project/
 
 3. **Create Plane Ticket**
    ```bash
-   # Create ticket in Plane
+   # Create ticket in Plane (or it was already created for you!)
    # Move to "In Progress"
-   git checkout -b PROJ-123-initial-setup
+   git checkout -b <IDENTIFIER>-123-initial-setup
    ```
 
 4. **Start Development**

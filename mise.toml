@@ -1,3 +1,20 @@
 [env]
 _.file = [".env"]
 CODEX_HOME = { value = ".codex", path = true }
+
+[tasks]
+# Project initialization - creates Plane project + runs Copier
+init-project = { run = "./scripts/init-project.sh", description = "Initialize new 33GOD project with Plane + Copier" }
+init-project-non-interactive = { run = "./scripts/init-project.sh --non-interactive", description = "Non-interactive project init" }
+
+# Direct Plane project creation
+create-plane-project = { run = "./scripts/create-plane-project.sh", description = "Create a Plane project and output ID" }
+
+# Template testing
+test-template = { run = "bash .scripts/test-template.sh", description = "Run template test scenarios" }
+
+# Template linting
+lint-template = { run = "copier lint", description = "Lint the Copier template" }
+
+# Development
+dev = { run = "echo 'Run: mise run init-project'", description = "Placeholder for project-specific dev" }
