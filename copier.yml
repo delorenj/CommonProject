@@ -51,8 +51,7 @@ user_skill_level:
 
 _tasks:
   - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
-  - "chmod +x .scripts/setup-plane.sh .mise/tasks/setup 2>/dev/null || true"
-  - "python3 .scripts/setup-plane.sh"
+  - "chmod +x .scripts/setup-plane.py .mise/tasks/setup 2>/dev/null || true"
   - "git init"
   - "mise trust"
   - "git add -A"

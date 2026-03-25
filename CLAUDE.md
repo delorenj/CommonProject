@@ -20,7 +20,7 @@ CommonProject/
 │   ├── .agentvibes/        # AgentVibes config
 │   ├── .mise/tasks/        # File-based mise tasks
 │   ├── .scripts/           # Post-generation utilities
-│   │   └── setup-plane.sh  # Creates Plane project + .plane.json
+│   │   └── setup-plane.py  # Creates Plane project + .plane.json
 │   ├── CLAUDE.md.jinja     # Generated project's CLAUDE.md
 │   └── mise.toml.jinja     # Generated project's mise config
 ├── _bmad/                  # BMAD system (root copy, for template-dev use)
@@ -53,7 +53,7 @@ Only two questions asked: `project_name` and `project_description`. Everything e
 After rendering, Copier automatically:
 1. Copies .gitignore from ~/.config/git/ignore
 2. Makes scripts executable
-3. Runs setup-plane.sh (creates Plane project, writes .plane.json)
+3. Runs setup-plane.py (creates Plane project, writes .plane.json)
 4. Runs git init + git add -A + git commit
 
 ### BMAD System

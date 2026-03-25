@@ -58,7 +58,7 @@ def main():
     api_key = os.environ.get("PLANE_33GOD_API_KEY", "")
     if not api_key:
         print("WARNING: PLANE_33GOD_API_KEY not set. Writing placeholder .plane.json")
-        print("  Set the key and re-run: python3 .scripts/setup-plane.sh")
+        print("  Set the key and re-run: mise run setup")
         write_plane_json(WORKSPACE, "PLACEHOLDER", identifier)
         return
 
