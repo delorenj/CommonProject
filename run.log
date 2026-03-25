@@ -1,0 +1,71 @@
+No git tags found in template; using HEAD as ref
+/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_vcs.py:211: DirtyLocalWarning: Dirty template changes included automatically.
+  warn(
+🎤 Your name (used in BMAD config and commit attribution)
+   Jarad
+
+
+
+
+
+         🎤 Your name (used in BMAD config and commit attribution)
+   Jarad
+Traceback (most recent call last):
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/bin/copier", line 12, in <module>
+    sys.exit(CopierApp.run())
+             ^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/plumbum/cli/application.py", line 631, in run
+    inst, retcode = subapp.run(argv, exit=False)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/plumbum/cli/application.py", line 626, in run
+    retcode = inst.main(*tailargs)
+              ^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_cli.py", line 275, in main
+    return _handle_exceptions(inner)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_cli.py", line 80, in _handle_exceptions
+    exit_code = method()
+                ^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_cli.py", line 257, in inner
+    run_copy(
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_main.py", line 1527, in run_copy
+    with Worker(
+         ^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_main.py", line 279, in __exit__
+    raise value
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_main.py", line 1554, in run_copy
+    worker.run_copy()
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_main.py", line 101, in _wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_main.py", line 1082, in run_copy
+    self._ask()
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_main.py", line 608, in _ask
+    [question.get_questionary_structure()],
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_user_data.py", line 408, in get_questionary_structure
+    default = self.get_default_rendered()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_user_data.py", line 307, in get_default_rendered
+    default = self.get_default()
+              ^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_user_data.py", line 289, in get_default
+    result = self.parse_answer(result)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_user_data.py", line 514, in parse_answer
+    return self._parse_answer(answer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_user_data.py", line 519, in _parse_answer
+    choices = self._formatted_choices
+              ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.local/share/uv/python/cpython-3.12.10-linux-x86_64-gnu/lib/python3.12/functools.py", line 998, in __get__
+    val = self.func(instance)
+          ^^^^^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_user_data.py", line 366, in _formatted_choices
+    self.cast_answer(c.value)
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_user_data.py", line 260, in cast_answer
+    return type_fn(answer)
+           ^^^^^^^^^^^^^^^
+  File "/home/delorenj/.cache/uv/archive-v0/vSNoV52W_IJRijTelnCuZ/lib/python3.12/site-packages/copier/_tools.py", line 111, in cast_to_str
+    raise ValueError(f"Could not convert {value} to string")
+ValueError: Could not convert {'beginner': 'New to development'} to string

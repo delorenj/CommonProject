@@ -2,31 +2,29 @@
 
 This file provides guidance to Claude Code when working on the **CommonProject template repo** itself.
 
-This is NOT a generated project. This is the Copier template source that generates new 33GOD ecosystem projects.
+This is NOT a generated project. This is the Copier template source that generates new projects.
 
 ## Repo Structure
 
 ```
 CommonProject/
-├── copier.yml              # Template questions and configuration
+├── copier.yml              # Template questions (just name + description)
 ├── template/               # What Copier renders into new projects
 │   ├── _bmad/              # Full BMAD system (pre-initialized)
 │   ├── .augment/           # Augment CLI commands
-│   ├── .claude/            # Claude Code commands, hooks, personalities
+│   ├── .claude/            # Claude Code config
 │   ├── .codex/             # Codex CLI prompts
 │   ├── .crush/             # CRUSH protocol commands
 │   ├── .gemini/            # Gemini CLI commands
 │   ├── .opencode/          # OpenCode CLI commands
+│   ├── .agentvibes/        # AgentVibes config
+│   ├── .mise/tasks/        # File-based mise tasks
+│   ├── .scripts/           # Post-generation utilities
+│   │   └── setup-plane.sh  # Creates Plane project + .plane.json
 │   ├── CLAUDE.md.jinja     # Generated project's CLAUDE.md
-│   ├── AGENTS.md.jinja     # Generated project's AGENTS.md
-│   ├── mise.toml.jinja     # Generated project's mise config
-│   ├── .plane.json.jinja   # Plane project config (rendered)
-│   ├── project.env.example.jinja
-│   └── ...                 # Conditional: Dockerfile, docker-compose, GOD docs
+│   └── mise.toml.jinja     # Generated project's mise config
 ├── _bmad/                  # BMAD system (root copy, for template-dev use)
 ├── .scripts/               # Template testing utilities
-├── README.md               # Template usage documentation
-├── TEMPLATE_USAGE.md       # Detailed template variable reference
 └── CLAUDE.md               # THIS FILE (template-dev guidance)
 ```
 
@@ -36,22 +34,27 @@ CommonProject/
 
 Root-level files describe the template itself. Files in `template/` are what Copier renders into generated projects. The `_subdirectory: template` setting in `copier.yml` enforces this boundary.
 
-- **Root `README.md`** = "How to use this template"
-- **`template/CLAUDE.md.jinja`** = The generated project's CLAUDE.md
-
 ### How Copier Processes Files
 
-- Files ending in `.jinja` get Jinja2 processed (variables substituted, conditionals evaluated, suffix stripped)
+- Files ending in `.jinja` get Jinja2 processed (variables substituted, suffix stripped)
 - All other files are copied verbatim (this is how 500+ BMAD files and CLI coder configs transfer untouched)
-- Filenames can contain Jinja2 conditionals: `{% if uses_docker %}Dockerfile{% endif %}.jinja`
 
 ### Template Variables
 
-All template variables are defined in `copier.yml`. Jinja2 templates reference these via `{{ variable_name }}`. Conditionals like `{% if has_hardware %}` control optional sections.
+Only two questions asked: `project_name` and `project_description`. Everything else is derived or automated:
+- `project_slug` derived from project_name
+- `user_name` / `user_skill_level` hardcoded for BMAD config
+- Plane project created via API in post-generation task
+- .gitignore copied from ~/.config/git/ignore
+- git init + initial commit run automatically
 
-### Plane Integration
+### Post-Generation Tasks (copier.yml `_tasks`)
 
-Project config lives in `.plane.json` (rendered from `.plane.json.jinja`). Runtime secrets and service URLs go in `.env` (copied from `project.env.example`). There is no `.plane.env`.
+After rendering, Copier automatically:
+1. Copies .gitignore from ~/.config/git/ignore
+2. Makes scripts executable
+3. Runs setup-plane.sh (creates Plane project, writes .plane.json)
+4. Runs git init + git add -A + git commit
 
 ### BMAD System
 
@@ -59,20 +62,9 @@ The `template/_bmad/` directory contains the full BMAD methodology pre-initializ
 
 ## Development Workflow
 
-### Adding a New Template Variable
-
-1. Add the question to `copier.yml`
-2. Use the variable in `template/*.jinja` files as needed
-3. Update TEMPLATE_USAGE.md variable reference table
-4. Add a test case in `.scripts/test-template.sh`
-
 ### Testing Template Changes
 
 ```bash
-# Generate test projects for all project types
-bash .scripts/test-template.sh
-
-# Test a single scenario manually
 copier copy . /tmp/test-project --overwrite
 ```
 
@@ -81,8 +73,8 @@ copier copy . /tmp/test-project --overwrite
 - Template logic (copier.yml, .jinja files)
 - BMAD system (pre-init state, in template/)
 - CLI coder prompts and hooks (in template/)
+- Post-generation scripts (in template/.scripts/)
 - Template testing scripts
-- Generic mise.toml with agnostic sections
 
 ### What Does NOT Belong
 
@@ -90,4 +82,3 @@ copier copy . /tmp/test-project --overwrite
 - Rendered/hydrated content with concrete values
 - Project-specific tech stacks or framework choices
 - Anything that only makes sense after template generation
-- References to `.plane.env` (use `.plane.json` for Plane config, `.env` for secrets)

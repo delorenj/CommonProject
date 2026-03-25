@@ -1,15 +1,3 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR\\.claude\\hooks-windows\\session-start-tts.ps1\""
-          }
-        ]
-      }
-    ]
-  },
   "$schema": "https://json.schemastore.org/claude-code-settings.json"
 }

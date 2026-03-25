@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# mise description="Initial project setup"
+mise trust
+echo "Project ready."
