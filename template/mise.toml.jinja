@@ -3,3 +3,8 @@
 
 [env]
 _.file = ".env"
+
+# Auto-activate a Python venv when one exists at ./.venv.
+# `create = false` means mise will not create one on its own,
+# and the directive is silently ignored when the path is absent.
+_.python.venv = { path = ".venv", create = false }

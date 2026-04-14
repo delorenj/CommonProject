@@ -21,7 +21,9 @@ CommonProject/
 │   ├── .mise/tasks/        # File-based mise tasks
 │   ├── .scripts/           # Post-generation utilities
 │   │   └── setup-plane.py  # Creates Plane project + .plane.json
-│   ├── CLAUDE.md.jinja     # Generated project's CLAUDE.md
+│   ├── AGENTS.md.jinja     # Generated project's agent SSOT
+│   ├── CLAUDE.md           # Symlink → AGENTS.md
+│   ├── GEMINI.md           # Symlink → AGENTS.md
 │   └── mise.toml.jinja     # Generated project's mise config
 ├── _bmad/                  # BMAD system (root copy, for template-dev use)
 ├── .scripts/               # Template testing utilities
