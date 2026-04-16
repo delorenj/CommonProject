@@ -243,14 +243,28 @@ fi
 # Cleanup
 rm -f "$ANSWERS_FILE"
 
-# Install BMAD inside the generated project (interactive; needs TTY)
+# Install BMAD fully non-interactively.
+# Modules: bmm (method), bmb (builder), cis (creative). Add tea/gds if desired.
+# Tools:   all six CLI coders this template renders configs for.
+BMAD_MODULES="${BMAD_MODULES:-bmm,bmb,cis}"
+BMAD_TOOLS="${BMAD_TOOLS:-claude-code,codex,gemini,opencode,crush,auggie}"
+BMAD_USER_NAME="${BMAD_USER_NAME:-Jarad}"
+
 echo ""
-echo "Installing BMAD methodology..."
-if (cd "$OUTPUT_DIR" && npx -y bmad-method@latest install); then
+echo "Installing BMAD (modules: $BMAD_MODULES | tools: $BMAD_TOOLS)..."
+if npx -y bmad-method@latest install \
+    --yes \
+    --directory "$OUTPUT_DIR" \
+    --modules "$BMAD_MODULES" \
+    --tools "$BMAD_TOOLS" \
+    --user-name "$BMAD_USER_NAME" \
+    --communication-language English \
+    --document-output-language English; then
     (cd "$OUTPUT_DIR" && git add -A && git commit -m "chore: install bmad-method" --allow-empty >/dev/null 2>&1 || true)
     echo -e "${GREEN}✓ BMAD installed${NC}"
 else
-    echo -e "${YELLOW}⚠ BMAD install skipped or failed. Run manually: cd $OUTPUT_DIR && npx bmad-method@latest install${NC}"
+    echo -e "${YELLOW}⚠ BMAD install failed. Run manually:${NC}"
+    echo -e "${YELLOW}   npx bmad-method@latest install --directory $OUTPUT_DIR --modules $BMAD_MODULES --tools $BMAD_TOOLS --user-name $BMAD_USER_NAME --yes${NC}"
 fi
 
 # =============================================================================
