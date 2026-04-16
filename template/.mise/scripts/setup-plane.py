@@ -7,8 +7,7 @@ import sys
 import urllib.request
 import urllib.error
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(SCRIPT_DIR, "project-data.json")
+DATA_FILE = ".project.json"
 PLANE_API = "https://plane.delo.sh/api/v1"
 WORKSPACE = "33god"
 

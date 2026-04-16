@@ -230,7 +230,7 @@ echo "Running Copier..."
 echo ""
 
 # Run Copier with answers
-if copier copy "$TEMPLATE_URL" "$OUTPUT_DIR" --answers-file "$ANSWERS_FILE" --overwrite; then
+if copier copy --vcs-ref="${TEMPLATE_VCS_REF:-HEAD}" --trust "$TEMPLATE_URL" "$OUTPUT_DIR" --answers-file "$ANSWERS_FILE" --overwrite; then
     echo ""
     echo -e "${GREEN}✓ Project generated successfully!${NC}"
 else
@@ -242,6 +242,16 @@ fi
 
 # Cleanup
 rm -f "$ANSWERS_FILE"
+
+# Install BMAD inside the generated project (interactive; needs TTY)
+echo ""
+echo "Installing BMAD methodology..."
+if (cd "$OUTPUT_DIR" && npx -y bmad-method@latest install); then
+    (cd "$OUTPUT_DIR" && git add -A && git commit -m "chore: install bmad-method" --allow-empty >/dev/null 2>&1 || true)
+    echo -e "${GREEN}✓ BMAD installed${NC}"
+else
+    echo -e "${YELLOW}⚠ BMAD install skipped or failed. Run manually: cd $OUTPUT_DIR && npx bmad-method@latest install${NC}"
+fi
 
 # =============================================================================
 # Summary

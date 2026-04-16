@@ -51,7 +51,7 @@ user_skill_level:
 
 _tasks:
   - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
-  - "chmod +x .scripts/setup-plane.py .mise/tasks/setup 2>/dev/null || true"
+  - "chmod +x .mise/scripts/setup-plane.py .mise/tasks/setup 2>/dev/null || true"
   - "ln -sf AGENTS.md CLAUDE.md"
   - "ln -sf AGENTS.md GEMINI.md"
   - "git init"

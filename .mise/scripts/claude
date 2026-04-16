@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Wrapper to inject --plugin-dir for claude
+# Remove this script's directory from PATH to avoid recursion
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CLEAN_PATH="$(echo "$PATH" | tr ':' '\n' | grep -vFx "$SCRIPT_DIR" | tr '\n' ':')"
+CLAUDE_BIN="$(PATH="$CLEAN_PATH" command -v claude)"
+
+if [ -z "$CLAUDE_BIN" ]; then
+    echo "Error: claude not found" >&2
+    exit 1
+fi
+
+exec "$CLAUDE_BIN" --plugin-dir /home/delorenj/.agents/skillex/agentpacks/google-agent-skills "$@"
