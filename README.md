@@ -4,15 +4,16 @@ Copier template for creating new 33GOD ecosystem components with BMAD methodolog
 
 ## Features
 
-- **Multiple Project Types**: Software, Hardware, Dashboard, Tooling
 - **Language Support**: Python, TypeScript, Rust
-- **Event-Driven Architecture**: Optional Bloodbank (RabbitMQ) integration
-- **Plane Integration**: `.plane.json` for ticket management and project config
+- **Event-Driven Architecture**: Optional [Bloodbank](https://github.com/delorenj/Bloodbank) integration
+- **Plane Integration**: `.project.json` for ticket management and project config
 - **Ticket Enforcement**: Git hooks enforce Plane ticket requirements
-- **BMAD Integration**: Full BMAD methodology structure
+- [TODO] **BMAD Integration**: Full BMAD methodology structure by auto running `npx bmad-method@latest install`
+- [TODO] Multiple-choice selection for different workflows: BMAD, GSD, GoogleAgentSkills, None.
 - **Containerization**: Optional Docker + Docker Compose
 - **GOD Documentation**: Auto-generated component documentation
 - **Environment Management**: mise.toml + `.env` for reproducible environments
+- 1password Secret Value Ready
 - **Multi-Agent Tooling**: Pre-configured prompts for Claude, Augment, OpenCode, Gemini, Codex, Copilot, Kimi
 
 ## Prerequisites
@@ -26,6 +27,8 @@ pip install copier
 
 # Set up Plane API key (for automated project creation)
 export PLANE_API_KEY="your-plane-api-key"
+OR
+[TODO] export PLANE_API_KEY=op://VaultName/Key/Field
 # Get from: https://plane.delo.sh/<workspace>/settings/api-tokens/
 ```
 
@@ -33,7 +36,11 @@ export PLANE_API_KEY="your-plane-api-key"
 
 ### Option 1: Automated Init (Recommended)
 
-One command handles everything: Plane project creation + Copier template:
+[TODO] One command handles everything: Plane project creation + Copier template:
+
+> TASK - Implement the following:
+> Currently, I have to run `copier copy --trust ~/code CommonProject .` globally, or `mise run init-project` while in the CommonProject source dir - but this is not ideal.
+> I would rather run `commonProject .` globally.
 
 ```bash
 # Interactive wizard - creates Plane project automatically
@@ -47,6 +54,7 @@ mise run init-project-non-interactive
 ```
 
 The wizard will:
+
 1. Ask for project details (name, description, type)
 2. Create the Plane project automatically
 3. Run Copier with all answers pre-filled
@@ -70,69 +78,23 @@ copier copy /path/to/CommonProject my-new-project
 The template asks for:
 
 ### Basic Configuration
+
 - **Project Name**: Display name (e.g., "HoloCron", "VernonVoice")
 - **Project Slug**: Directory/package name (auto-generated from name)
 - **Description**: One-sentence project description
-- **Project Type**: software, hardware, dashboard, or tooling
-
-### Hardware Configuration (conditional, if project_type == hardware)
-- **Hardware Platform**: e.g., "Raspberry Pi Zero 2 W", "ESP32"
-- **Hardware Hostname**: SSH hostname (default: {slug}.local)
-- **Hardware Peripherals**: Comma-separated list
-
-### Agent Configuration
-- **Has Agent**: Whether component has a dedicated AI agent
-- **Agent Name**: Agent display name
-- **Agent Role**: Agent purpose/role description
 
 ### Plane Integration
+
 - **Workspace**: Plane workspace slug (default: 33god)
-- **Project ID**: From Plane project settings
+- **Project Name**
 - **Project Identifier**: 2+ character ticket prefix (e.g., HOLO, VERN)
-
-### Technical Stack
-- **Primary Language**: python, typescript, or rust
-- **Uses Docker**: Enable containerization
-- **Uses Event Bus**: Bloodbank integration
-- **Additional Services**: Comma-separated (postgres, redis, qdrant)
-
-### Documentation
-- **Initialize GOD Docs**: Create GOD documentation structure
-- **Component Domain**: Which 33GOD domain (infrastructure, agent-orchestration, etc.)
-
-## Generated Structure
-
-```
-my-new-project/
-├── _bmad/                    # BMAD methodology (pre-initialized)
-│   ├── bmb/                  # BMAD Builder
-│   ├── bmm/                  # BMAD Method Management
-│   ├── cis/                  # Creative Innovation Suite
-│   ├── core/                 # Core BMAD resources
-│   └── custom/               # Custom workflows
-├── .augment/                 # Augment CLI commands
-├── .claude/                  # Claude Code commands, hooks, personalities
-├── .codex/                   # Codex CLI prompts
-├── .crush/                   # CRUSH protocol commands
-├── .gemini/                  # Gemini CLI commands
-├── .opencode/                # OpenCode CLI commands
-├── docs/                     # GOD documentation (if enabled)
-│   └── GOD.md
-├── .plane.json               # Plane project configuration
-├── AGENTS.md                 # Agent context and rules
-├── CLAUDE.md                 # Claude Code guidance
-├── mise.toml                 # Environment + task runner
-├── project.env.example       # Runtime env template (copy to .env)
-├── docker-compose.yml        # Container orchestration (if Docker enabled)
-├── Dockerfile                # Container build (if Docker enabled)
-└── README.md                 # Project README
-```
 
 ## Post-Generation Steps
 
 > **Tip:** If you used `mise run init-project`, most of this is done automatically!
 
 1. **Initialize Environment**
+
    ```bash
    cd my-new-project
    cp project.env.example .env
@@ -141,6 +103,7 @@ my-new-project/
    ```
 
 2. **Initialize Git**
+
    ```bash
    git init
    git add .
@@ -148,6 +111,7 @@ my-new-project/
    ```
 
 3. **Create Plane Ticket**
+
    ```bash
    # Create ticket in Plane (or it was already created for you!)
    # Move to "In Progress"
@@ -155,6 +119,7 @@ my-new-project/
    ```
 
 4. **Start Development**
+
    ```bash
    # With Docker
    docker compose up -d
@@ -179,7 +144,7 @@ copier update --vcs-ref=v1.2.0
 
 ### Repo Structure
 
-Root-level files describe the template itself. Files in `template/` are what Copier renders into generated projects. See `CLAUDE.md` for full development guidance.
+Root-level files describe the template itself. Files in `template/` are what Copier renders into generated projects. See `AGENTS.md` for full development guidance.
 
 ### Testing
 
@@ -204,25 +169,4 @@ copier copy . /tmp/test-project --overwrite
 1. Add to `primary_language` choices in `copier.yml`
 2. Create Dockerfile variant in templates
 3. Add mise.toml tasks
-4. Update CLAUDE.md template with language-specific guidance
-
-## Architecture Decisions
-
-### Why Copier?
-- **Update Support**: Projects can receive template updates via `copier update`
-- **Powerful Templating**: Jinja2 for complex conditional logic
-- **Interactive**: Question-based configuration
-- **Version Control**: Track template versions in generated projects
-
-### Why Two-Layer Separation?
-- Root level = template meta-docs (this README, CLAUDE.md for template dev)
-- `template/` = what gets rendered (`_subdirectory: template` in copier.yml)
-- Prevents collision between template docs and generated project docs
-
-## License
-
-[Add license information]
-
-## Support
-
-- **Plane**: https://plane.delo.sh/33god/
+4. Update AGENTS.md template with language-specific guidance
