@@ -126,7 +126,7 @@ PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | 
 echo "  Generated slug: $PROJECT_SLUG"
 
 prompt "PROJECT_DESCRIPTION" "  Project description" ""
-prompt "PROJECT_TYPE" "  Project type" "software" "software hardware dashboard tooling"
+prompt "PROJECT_TYPE" "  Project type" "software"
 PROJECT_TYPE=$(echo "$PROJECT_TYPE" | tr '[:upper:]' '[:lower:]')
 
 # =============================================================================
@@ -159,13 +159,25 @@ else
         prompt "PLANE_PROJECT_ID" "  Plane project ID (UUID, create at plane.delo.sh)" ""
     else
         echo ""
-        echo -e "${GREEN}Creating Plane project...${NC}"
-        PLANE_PROJECT_ID=$("$PLANE_SCRIPT" "$PLANE_WORKSPACE" "$PROJECT_NAME" "$PROJECT_IDENTIFIER" 2>&1)
-        if [[ $? -ne 0 ]]; then
-            echo -e "${RED}Failed to create Plane project${NC}" >&2
-            echo "$PLANE_PROJECT_ID" >&2
+        # Capture stdout (UUID) separately from stderr (status/errors). `|| true`
+        # prevents `set -e` from killing us on non-zero exit; we handle it below.
+        PLANE_ERR_FILE=$(mktemp)
+        PLANE_PROJECT_ID=$("$PLANE_SCRIPT" "$PLANE_WORKSPACE" "$PROJECT_NAME" "$PROJECT_IDENTIFIER" 2>"$PLANE_ERR_FILE") || PLANE_RC=$?
+        PLANE_RC=${PLANE_RC:-0}
+        cat "$PLANE_ERR_FILE" >&2
+        rm -f "$PLANE_ERR_FILE"
+
+        if [[ $PLANE_RC -ne 0 ]]; then
+            echo "" >&2
+            echo -e "${YELLOW}⚠ Plane project creation failed (exit $PLANE_RC).${NC}" >&2
+            echo -e "${YELLOW}  If the project already exists, grab its UUID from plane.delo.sh and paste below.${NC}" >&2
             echo ""
-            prompt "PLANE_PROJECT_ID" "  Enter Plane project ID manually" ""
+            prompt "PLANE_PROJECT_ID" "  Enter existing Plane project ID (UUID)" ""
+            if [[ -z "$PLANE_PROJECT_ID" ]]; then
+                echo -e "${RED}Error: Plane project ID required to continue${NC}" >&2
+                exit 1
+            fi
+            unset PLANE_RC
         fi
     fi
 fi
@@ -177,16 +189,16 @@ echo ""
 echo -e "${YELLOW}Step 3/4: Technical configuration${NC}"
 echo ""
 
-prompt "PRIMARY_LANGUAGE" "  Primary language" "python" "python typescript rust mixed"
+prompt "PRIMARY_LANGUAGE" "  Primary language" "python"
 PRIMARY_LANGUAGE=$(echo "$PRIMARY_LANGUAGE" | tr '[:upper:]' '[:lower:]')
 
-prompt "USES_DOCKER" "  Use Docker?" "y" "y n"
+prompt "USES_DOCKER" "  Use Docker?" "y"
 USES_DOCKER=$([[ "$USES_DOCKER" == "y" ]] && echo "true" || echo "false")
 
-prompt "USES_EVENT_BUS" "  Use event bus (Bloodbank)?" "y" "y n"
+prompt "USES_EVENT_BUS" "  Use event bus (Bloodbank)?" "y"
 USES_EVENT_BUS=$([[ "$USES_EVENT_BUS" == "y" ]] && echo "true" || echo "false")
 
-prompt "INITIALIZE_GOD_DOCS" "  Initialize GOD docs?" "y" "y n"
+prompt "INITIALIZE_GOD_DOCS" "  Initialize GOD docs?" "y"
 INITIALIZE_GOD_DOCS=$([[ "$INITIALIZE_GOD_DOCS" == "y" ]] && echo "true" || echo "false")
 
 # =============================================================================
