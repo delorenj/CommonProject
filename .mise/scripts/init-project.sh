@@ -230,7 +230,7 @@ echo "Running Copier..."
 echo ""
 
 # Run Copier with answers
-if copier copy --vcs-ref="${TEMPLATE_VCS_REF:-HEAD}" --trust "$TEMPLATE_URL" "$OUTPUT_DIR" --answers-file "$ANSWERS_FILE" --overwrite; then
+if copier copy --vcs-ref="${TEMPLATE_VCS_REF:-HEAD}" --trust "$TEMPLATE_URL" "$OUTPUT_DIR" --data-file "$ANSWERS_FILE" --defaults --overwrite; then
     echo ""
     echo -e "${GREEN}✓ Project generated successfully!${NC}"
 else
