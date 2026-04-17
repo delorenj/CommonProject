@@ -47,6 +47,14 @@ user_skill_level:
   default: advanced
   when: false
 
+# Primary language. Not asked interactively — init-project.sh provides the
+# answer via --data-file. Drives conditional blocks in rendered files (e.g.
+# the `_.python.venv` directive in mise.toml).
+primary_language:
+  type: str
+  default: python
+  when: false
+
 # --- Post-generation tasks ---
 
 _tasks:
