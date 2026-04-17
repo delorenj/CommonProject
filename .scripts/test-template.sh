@@ -1,148 +1,71 @@
 #!/usr/bin/env bash
-# Test script for validating the Copier template
+# Smoke test for the Copier template.
+# Renders a project, runs the built-in _tasks, asserts structural invariants.
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="$(dirname "$SCRIPT_DIR")"
-TEST_OUTPUT_DIR="/tmp/copier-template-test"
+OUT_ROOT="${OUT_ROOT:-/tmp/copier-template-test}"
+OUT="$OUT_ROOT/render"
+VCS_REF="${TEMPLATE_VCS_REF:-HEAD}"
 
-echo "🧪 Testing Copier Template"
-echo "Template: $TEMPLATE_DIR"
-echo "Output: $TEST_OUTPUT_DIR"
-echo ""
-
-# Check if copier is installed
-if ! command -v copier &> /dev/null; then
-    echo "❌ Copier not found. Install with: uv tool install copier"
+if ! command -v copier &>/dev/null; then
+    echo "Copier not found. Install with: uv tool install copier"
     exit 1
 fi
 
-# Clean previous test output
-if [ -d "$TEST_OUTPUT_DIR" ]; then
-    echo "🧹 Cleaning previous test output..."
-    rm -rf "$TEST_OUTPUT_DIR"
-fi
+rm -rf "$OUT_ROOT"
+mkdir -p "$OUT_ROOT"
 
-mkdir -p "$TEST_OUTPUT_DIR"
+echo "Rendering template (vcs-ref=$VCS_REF) → $OUT"
+copier copy \
+    --trust \
+    --defaults \
+    --vcs-ref="$VCS_REF" \
+    --data project_name="Smoke Test" \
+    --data project_description="Automated template smoke test" \
+    "$TEMPLATE_DIR" "$OUT" >/dev/null
 
-# Test 1: Software Project (Python)
-echo "📦 Test 1: Python Software Project"
-copier copy "$TEMPLATE_DIR" "$TEST_OUTPUT_DIR/test-python-service" \
-    --data project_name="Test Python Service" \
-    --data project_type=software \
-    --data primary_language=python \
-    --data plane_workspace=33god \
-    --data plane_project_id=1234567890 \
-    --data project_identifier=TPS \
-    --data uses_docker=true \
-    --data uses_event_bus=true \
-    --data additional_services="postgres,redis" \
-    --data initialize_god_docs=true \
-    --data component_domain=infrastructure \
-    --defaults
+fail=0
+assert_file()    { [ -f "$1" ] || { echo "✗ missing file: $1"; fail=1; }; }
+assert_exec()    { [ -x "$1" ] || { echo "✗ not executable: $1"; fail=1; }; }
+assert_symlink() { [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ] || { echo "✗ $1 should symlink to $2"; fail=1; }; }
+assert_dir()     { [ -d "$1" ] || { echo "✗ missing dir: $1"; fail=1; }; }
+assert_grep()    { grep -q "$2" "$1" || { echo "✗ $1 should contain: $2"; fail=1; }; }
 
-# Validate generated files
-if [ -f "$TEST_OUTPUT_DIR/test-python-service/CLAUDE.md" ] && \
-   [ -f "$TEST_OUTPUT_DIR/test-python-service/mise.toml" ] && \
-   [ -f "$TEST_OUTPUT_DIR/test-python-service/docker-compose.yml" ]; then
-    echo "✅ Python service generated successfully"
+# Rendered files
+assert_file    "$OUT/AGENTS.md"
+assert_file    "$OUT/mise.toml"
+assert_file    "$OUT/.project.json"
+assert_file    "$OUT/.mise/scripts/setup-plane.py"
+assert_file    "$OUT/.mise/tasks/setup"
+
+# Post-gen tasks (copier _tasks)
+assert_file    "$OUT/.gitignore"
+assert_symlink "$OUT/CLAUDE.md" "AGENTS.md"
+assert_symlink "$OUT/GEMINI.md" "AGENTS.md"
+assert_exec    "$OUT/.mise/scripts/setup-plane.py"
+assert_exec    "$OUT/.mise/tasks/setup"
+assert_dir     "$OUT/.git"
+
+# Renamed data file wired correctly
+assert_grep    "$OUT/.project.json" '"project_name": "Smoke Test"'
+assert_grep    "$OUT/.mise/scripts/setup-plane.py" 'DATA_FILE = ".project.json"'
+
+# Confirm setup-plane.py can actually read .project.json end-to-end
+(cd "$OUT" && PLANE_33GOD_API_KEY="" python3 .mise/scripts/setup-plane.py >/dev/null 2>&1)
+assert_file    "$OUT/.plane.json"
+assert_grep    "$OUT/.plane.json" '"project_identifier": "SMOK"'
+
+# Initial commit landed
+(cd "$OUT" && git log -1 --format=%s | grep -qi "initial commit") \
+    || { echo "✗ initial commit missing"; fail=1; }
+
+if [ "$fail" -eq 0 ]; then
+    echo "✓ All assertions passed"
+    echo "  Rendered at: $OUT"
 else
-    echo "❌ Python service generation failed"
+    echo "✗ Test failed"
     exit 1
 fi
-
-# Test 2: Hardware Project
-echo ""
-echo "🔧 Test 2: Hardware Project"
-copier copy "$TEMPLATE_DIR" "$TEST_OUTPUT_DIR/test-hardware-device" \
-    --data project_name="Test Hardware Device" \
-    --data project_type=hardware \
-    --data has_hardware=true \
-    --data hardware_platform="Raspberry Pi 4" \
-    --data hardware_hostname="testdevice.local" \
-    --data hardware_peripherals="Camera Module, Temperature Sensor" \
-    --data has_agent=true \
-    --data agent_name="TestBot" \
-    --data agent_role="Hardware Controller" \
-    --data primary_language=python \
-    --data plane_workspace=33god \
-    --data plane_project_id=9876543210 \
-    --data project_identifier=THD \
-    --data uses_docker=false \
-    --data uses_event_bus=true \
-    --data initialize_god_docs=true \
-    --data component_domain=custom \
-    --defaults
-
-if [ -f "$TEST_OUTPUT_DIR/test-hardware-device/CLAUDE.md" ]; then
-    # Verify hardware-specific content
-    if grep -q "Raspberry Pi 4" "$TEST_OUTPUT_DIR/test-hardware-device/CLAUDE.md"; then
-        echo "✅ Hardware project generated with correct hardware details"
-    else
-        echo "❌ Hardware project missing hardware details"
-        exit 1
-    fi
-else
-    echo "❌ Hardware project generation failed"
-    exit 1
-fi
-
-# Test 3: TypeScript Dashboard
-echo ""
-echo "🎨 Test 3: TypeScript Dashboard"
-copier copy "$TEMPLATE_DIR" "$TEST_OUTPUT_DIR/test-dashboard" \
-    --data project_name="Test Dashboard" \
-    --data project_type=dashboard \
-    --data primary_language=typescript \
-    --data plane_workspace=33god \
-    --data plane_project_id=5555555555 \
-    --data project_identifier=TDB \
-    --data uses_docker=true \
-    --data uses_event_bus=true \
-    --data initialize_god_docs=true \
-    --data component_domain=dashboards-voice \
-    --defaults
-
-if [ -f "$TEST_OUTPUT_DIR/test-dashboard/CLAUDE.md" ] && \
-   [ -f "$TEST_OUTPUT_DIR/test-dashboard/docker-compose.yml" ]; then
-    echo "✅ Dashboard project generated successfully"
-else
-    echo "❌ Dashboard project generation failed"
-    exit 1
-fi
-
-# Test 4: Rust CLI Tool
-echo ""
-echo "⚙️  Test 4: Rust CLI Tool"
-copier copy "$TEMPLATE_DIR" "$TEST_OUTPUT_DIR/test-cli-tool" \
-    --data project_name="Test CLI Tool" \
-    --data project_type=tooling \
-    --data primary_language=rust \
-    --data plane_workspace=33god \
-    --data plane_project_id=7777777777 \
-    --data project_identifier=TCT \
-    --data uses_docker=false \
-    --data uses_event_bus=false \
-    --data initialize_god_docs=false \
-    --defaults
-
-if [ -f "$TEST_OUTPUT_DIR/test-cli-tool/CLAUDE.md" ]; then
-    echo "✅ CLI tool generated successfully"
-else
-    echo "❌ CLI tool generation failed"
-    exit 1
-fi
-
-# Summary
-echo ""
-echo "✨ All tests passed!"
-echo ""
-echo "📁 Generated projects:"
-echo "  1. $TEST_OUTPUT_DIR/test-python-service"
-echo "  2. $TEST_OUTPUT_DIR/test-hardware-device"
-echo "  3. $TEST_OUTPUT_DIR/test-dashboard"
-echo "  4. $TEST_OUTPUT_DIR/test-cli-tool"
-echo ""
-echo "🔍 Review generated projects to validate template correctness"
-echo "🧹 Clean up with: rm -rf $TEST_OUTPUT_DIR"
