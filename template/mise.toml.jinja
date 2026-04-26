@@ -18,7 +18,7 @@ CODEX_HOME = { value = ".codex", path = true }
 # i.e. All linked agent files MUST be siblings at
 # any given level of nesting.
 [hooks]
-enter = "\{\{config_root\}\}/.mise/scripts/link-agentfiles.sh"
+enter = "{{config_root}}/.mise/scripts/link-agentfiles.sh"
 
 [[watch_files]]
 patterns = ["AGENTS.md"]
@@ -26,4 +26,4 @@ task = "link-agentfiles"
 
 [tasks.link-agentfiles]
 description = "Symlink all agent files to AGENTS.md"
-run = "\{\{config_root\}\}/.mise/scripts/link-agentfiles.sh"
+run = "{{config_root}}/.mise/scripts/link-agentfiles.sh"
