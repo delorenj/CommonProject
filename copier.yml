@@ -30,6 +30,20 @@ project_description:
   help: One-line description
   default: ""
 
+# --- Derived (never asked) ---
+
+project_slug:
+  type: str
+  default: "{{ project_name | lower | replace(' ', '-') | replace('_', '-') }}"
+  when: false
+
+# Drives conditional blocks in rendered files (e.g. _.python.venv in mise.toml).
+# Not asked interactively; init-project.sh can override via --data-file.
+primary_language:
+  type: str
+  default: python
+  when: false
+
 # --- Post-generation tasks ---
 
 _tasks:
