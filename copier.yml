@@ -30,31 +30,6 @@ project_description:
   help: One-line description
   default: ""
 
-# --- Derived (never asked) ---
-
-project_slug:
-  type: str
-  default: "{{ project_name | lower | replace(' ', '-') | replace('_', '-') }}"
-  when: false
-
-user_name:
-  type: str
-  default: Jarad
-  when: false
-
-user_skill_level:
-  type: str
-  default: advanced
-  when: false
-
-# Primary language. Not asked interactively — init-project.sh provides the
-# answer via --data-file. Drives conditional blocks in rendered files (e.g.
-# the `_.python.venv` directive in mise.toml).
-primary_language:
-  type: str
-  default: python
-  when: false
-
 # --- Post-generation tasks ---
 
 _tasks:
@@ -62,7 +37,4 @@ _tasks:
   - "chmod +x .mise/scripts/setup-plane.py .mise/tasks/setup 2>/dev/null || true"
   - "ln -sf AGENTS.md CLAUDE.md"
   - "ln -sf AGENTS.md GEMINI.md"
-  - "git init"
   - "mise trust"
-  - "git add -A"
-  - "ALLOW_NO_TICKET=1 git commit -m 'Initial commit'"
