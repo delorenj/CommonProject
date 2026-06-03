@@ -219,6 +219,7 @@ cat > "$ANSWERS_FILE" << EOF
     "project_slug": "$PROJECT_SLUG",
     "project_description": "$PROJECT_DESCRIPTION",
     "project_type": "$PROJECT_TYPE",
+    "ticket_provider": "${TICKET_PROVIDER:-plane}",
     "plane_workspace": "$PLANE_WORKSPACE",
     "plane_project_id": "$PLANE_PROJECT_ID",
     "project_identifier": "$PROJECT_IDENTIFIER",

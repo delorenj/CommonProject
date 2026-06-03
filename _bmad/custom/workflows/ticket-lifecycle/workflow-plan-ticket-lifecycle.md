@@ -18,7 +18,7 @@ workflowName: ticket-lifecycle
 A fully autonomous, multi-agent ticket lifecycle workflow that takes a Plane board ticket from raw backlog to verified-complete with zero human intervention. Momo (OpenClaw PM agent) orchestrates via Bloodbank events, delegating to BMAD agents for AC refinement, development, and QA validation. Universal across all projects.
 
 **Who It's For:**
-Momo (the PM/orchestrator agent) triggers or receives triggers for this workflow. BMAD agents execute the individual phases. The workflow is project-agnostic, resolving project context via `.plane.json` + workspace detection.
+Momo (the PM/orchestrator agent) triggers or receives triggers for this workflow. BMAD agents execute the individual phases. The workflow is project-agnostic, resolving project context via the `ticket_provider` block in `.project.json` + workspace detection.
 
 **What It Produces:**
 Completed, QA-verified tickets with full audit trail in Plane. Each ticket progresses through a defined state machine with clear handoffs between agent roles.
@@ -32,7 +32,7 @@ Completed, QA-verified tickets with full audit trail in Plane. Each ticket progr
 - QA agent verifies each AC line item. Failures route back to coding agent with specific defect details.
 - Bloodbank event schemas exist at ~/code/33GOD/holyfields/schemas/agent/ (task.assigned, task.completed, message.sent).
 - Plane integration via existing skill: managing-tickets-and-tasks-in-plane (API, label routing, ticket scoring).
-- The workflow must be universal: works with any project that has a `.plane.json` and Plane workspace registration.
+- The workflow must be universal: works with any project that has a `ticket_provider` block in `.project.json` and Plane workspace registration.
 
 **Agent Roster:**
 | Agent | Type | Role | Communication |
@@ -102,12 +102,12 @@ Each state has a max duration. If exceeded, the workflow emits a `ticket.stale` 
 - Checkpoint frequency: No pauses. Bloodbank events serve as observable checkpoints for external consumers.
 
 **Inputs Required:**
-- Required: Ticket ID or Plane board context (workspace + project from `.plane.json`)
+- Required: Ticket ID or Plane board context (ticket_provider.workspace + ticket_provider.board_id from `.project.json`)
 - Required: Plane API access (via existing skill `managing-tickets-and-tasks-in-plane`)
 - Required: Bloodbank CLI access for event publishing (`~/code/33GOD/bloodbank/`)
 - Required: Holyfields event schemas (`~/code/33GOD/holyfields/schemas/`)
 - Optional: Trigger mode context (human request, agent delegation, or Bloodbank event)
-- Precondition: `.plane.json` must exist in project root AND reference a workspace registered in `~/.claude/plane-workspaces.json`. If missing or malformed, workflow exits with a clear error (no silent failure).
+- Precondition: `.project.json` must exist in project root and contain a `ticket_provider` block with a non-empty `board_id` AND reference a workspace registered in `~/.claude/plane-workspaces.json`. If missing or malformed, workflow exits with a clear error (no silent failure).
 
 **Output Specifications:**
 - Type: Actions (not a document)
@@ -155,7 +155,7 @@ If any criterion fails, route to Plane Captain for refinement.
 - No human intervention required end-to-end
 - Graceful handling of QA failures (max 3 retries, then blocked with full history)
 - Graceful handling of staleness (event emitted, no infinite hangs)
-- Precondition failures (missing `.plane.json`) produce clear errors, not silent failures
+- Precondition failures (missing `.project.json` or `ticket_provider` block) produce clear errors, not silent failures
 
 **Instruction Style:**
 - Overall: Mixed
@@ -172,7 +172,7 @@ If any criterion fails, route to Plane Captain for refinement.
 
 **LLM Features:**
 - **Web-Browsing:** Excluded - All data from Plane API + local repo
-- **File I/O:** Included - Reads `.plane.json`, coding agent writes code/tests, reads Holyfields schemas
+- **File I/O:** Included - Reads `.project.json` (ticket_provider block), coding agent writes code/tests, reads Holyfields schemas
 - **Sub-Agents:** Included - Core mechanism: spawns Plane Captain, Coding Agent, QA Agent as needed
 - **Sub-Processes:** Excluded - Single ticket per invocation, no parallelism needed
 
@@ -192,7 +192,7 @@ If any criterion fails, route to Plane Captain for refinement.
 **Workflow Structure Preview:**
 
 Phase 1: Context Resolution
-- Resolve project context from `.plane.json` + `~/.claude/plane-workspaces.json`
+- Resolve project context from `.project.json` (ticket_provider block) + `~/.claude/plane-workspaces.json`
 - Validate preconditions (workspace exists, API accessible)
 - Exit with clear error if preconditions fail
 
@@ -252,13 +252,13 @@ Phase 7: Completion
 
 | Step | File | Goal |
 |------|------|------|
-| 01 | step-01-validate.md | Validate: .plane.json exists, Bloodbank CLI accessible, schemas present, skill installed |
+| 01 | step-01-validate.md | Validate: .project.json ticket_provider block exists, Bloodbank CLI accessible, schemas present, skill installed |
 
 ### Data Flow
 
 ```
 step-01-init
-  reads: .plane.json, ~/.claude/plane-workspaces.json
+  reads: .project.json (ticket_provider block), ~/.claude/plane-workspaces.json
   produces: project context (workspace_id, project_id, ticket_id, ticket data)
   -> step-02
 
@@ -334,7 +334,7 @@ Workflow orchestrator. Reads state, evaluates rubrics, spawns agents, transition
 
 ### Subprocess Optimization
 
-- Pattern 1 (Grep/Regex) at step-01-init: search for .plane.json in project tree
+- Pattern 1 (Grep/Regex) at step-01-init: search for .project.json in project tree
 - Pattern 4 (Parallel) deferred to v2: QA could parallelize AC item checks
 
 ### Error Handling

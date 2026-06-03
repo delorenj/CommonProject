@@ -36,7 +36,7 @@ To resolve the project's Plane workspace context, validate all preconditions for
 
 ## EXECUTION PROTOCOLS:
 
-- Resolve project context from `.plane.json` + workspace config.
+- Resolve project context from the `ticket_provider` block in `.project.json` + workspace config.
 - Load Plane skill for API patterns.
 - Load workflow config for state mapping and staleness durations.
 - Acquire ticket (by ID if provided, or via scoring algorithm).
@@ -45,7 +45,7 @@ To resolve the project's Plane workspace context, validate all preconditions for
 
 - This is step 1. No prior context exists.
 - Focus: project identification, workspace resolution, ticket selection.
-- Dependencies: `.plane.json` must exist, Plane API must be accessible.
+- Dependencies: `.project.json` must exist and contain a `ticket_provider` block with a non-empty `board_id`, Plane API must be accessible.
 
 ## MANDATORY SEQUENCE
 
@@ -53,18 +53,18 @@ To resolve the project's Plane workspace context, validate all preconditions for
 
 ### 1. Resolve Project Context
 
-Search for `.plane.json` in the current project root.
+Search for `.project.json` in the current project root.
 
 **If found:**
-- Read and parse `.plane.json` to extract `workspace_slug` and `project_id`.
+- Read and parse `.project.json` and extract the `ticket_provider` block, reading `ticket_provider.workspace` and `ticket_provider.board_id`.
 - Load `~/.claude/plane-workspaces.json` to resolve API endpoint and credentials for this workspace.
 
-**If NOT found:**
-- EXIT with error: "PRECONDITION FAILED: No .plane.json found in project root. This workflow requires a Plane-integrated project. Create .plane.json with workspace_slug and project_id."
+**If NOT found (or no `ticket_provider` block / empty `board_id`):**
+- EXIT with error: "PRECONDITION FAILED: No .project.json with a ticket_provider block found in project root. This workflow requires a Plane-integrated project. Ensure .project.json contains a ticket_provider block with workspace and a non-empty board_id."
 
 ### 2. Validate Workspace Registration
 
-Using the `workspace_slug` from `.plane.json`, verify it exists in `~/.claude/plane-workspaces.json`.
+Using `ticket_provider.workspace` from `.project.json`, verify it exists in `~/.claude/plane-workspaces.json`.
 
 **If registered:**
 - Extract API base URL, API key reference, and workspace ID.
@@ -155,7 +155,7 @@ Immediately load, read entire file, then execute {nextStepFile}.
 
 ### SUCCESS:
 
-- Project context resolved from `.plane.json` + workspace config
+- Project context resolved from the `ticket_provider` block in `.project.json` + workspace config
 - All preconditions validated (Plane API, Bloodbank, Holyfields)
 - Ticket acquired (by ID or scoring algorithm)
 - Ticket context captured (ID, title, AC, status, metadata)
@@ -165,7 +165,7 @@ Immediately load, read entire file, then execute {nextStepFile}.
 ### FAILURE:
 
 - Proceeding without validating preconditions
-- Silently failing on missing `.plane.json` or workspace
+- Silently failing on missing `.project.json` / `ticket_provider` block or workspace
 - Not posting audit comment at state transition
 - Not broadcasting Bloodbank event
 - Attempting to evaluate AC in this step (that's step 2)

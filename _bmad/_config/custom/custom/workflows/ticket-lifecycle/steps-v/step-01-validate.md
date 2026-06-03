@@ -38,14 +38,15 @@ To verify that all external dependencies, configuration files, and tooling requi
 
 ### 1. Validate Plane Configuration
 
-**Check `.plane.json` in project root:**
+**Check `.project.json` in project root:**
 - [ ] File exists
-- [ ] Contains `workspace_slug`
-- [ ] Contains `project_id`
+- [ ] Contains a `ticket_provider` block
+- [ ] `ticket_provider.workspace` is present
+- [ ] `ticket_provider.board_id` is present and non-empty
 
 **Check `~/.claude/plane-workspaces.json`:**
 - [ ] File exists
-- [ ] Contains entry matching the workspace_slug from `.plane.json`
+- [ ] Contains entry matching `ticket_provider.workspace` from `.project.json`
 - [ ] Entry has `api_key` and `base_url`
 
 **Check Plane skill:**
@@ -100,7 +101,7 @@ TICKET-LIFECYCLE PREREQUISITE VALIDATION
 ========================================
 
 Plane Configuration:
-  .plane.json ................ [PASS/FAIL]
+  .project.json (ticket_provider) [PASS/FAIL]
   plane-workspaces.json ...... [PASS/FAIL]
   Plane skill ................ [PASS/FAIL]
   Plane API connectivity ..... [PASS/FAIL]

@@ -48,7 +48,7 @@ This uses **step-file architecture** for disciplined execution:
 
 Load project context:
 
-- `.plane.json` from project root for workspace and project identification
+- `.project.json` from project root (the `ticket_provider` block) for workspace and project identification
 - `~/.claude/plane-workspaces.json` for workspace API configuration
 - Plane skill at `~/.claude/skills/managing-tickets-and-tasks-in-plane/` for API patterns
 - Bloodbank CLI at `~/code/33GOD/bloodbank/` for event publishing

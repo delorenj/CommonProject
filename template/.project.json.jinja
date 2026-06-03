@@ -1,5 +1,19 @@
+{% if ticket_provider == 'plane' and plane_project_id -%}
+{% set board_url = plane_base ~ '/' ~ plane_workspace ~ '/projects/' ~ plane_project_id ~ '/issues/' -%}
+{% else -%}
+{% set board_url = '' -%}
+{% endif -%}
 {
   "project_name": {{ project_name | tojson }},
   "project_description": {{ project_description | tojson }},
-  "project_slug": {{ project_slug | tojson }}
+  "project_slug": {{ project_slug | tojson }},
+  "repo_path": "",
+  "ticket_provider": {
+    "type": {{ ticket_provider | tojson }},
+    "workspace": {{ plane_workspace | tojson }},
+    "identifier": {{ project_identifier | tojson }},
+    "board_id": {{ plane_project_id | tojson }},
+    "board_url": {{ board_url | tojson }}
+  },
+  "agents": {}
 }

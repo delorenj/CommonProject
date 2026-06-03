@@ -12,7 +12,7 @@ Broadcast at every state transition. Primary event for this workflow.
   "event_type": "ticket.state_changed",
   "version": "v1",
   "payload": {
-    "project_id": "{from .plane.json}",
+    "project_id": "{from ticket_provider.board_id in .project.json}",
     "ticket_id": "{plane ticket ID}",
     "previous_state": "{state before transition}",
     "new_state": "{state after transition}",
@@ -31,7 +31,7 @@ Broadcast when a ticket exceeds max duration in any state.
   "event_type": "ticket.stale",
   "version": "v1",
   "payload": {
-    "project_id": "{from .plane.json}",
+    "project_id": "{from ticket_provider.board_id in .project.json}",
     "ticket_id": "{plane ticket ID}",
     "stuck_state": "{state ticket is stuck in}",
     "duration_minutes": "{how long it has been in this state}",

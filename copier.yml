@@ -30,11 +30,46 @@ project_description:
   help: One-line description
   default: ""
 
+# Ticket board provider for this project. The board itself is created by
+# init-project.sh (create-plane-project.sh) BEFORE copier runs; its identity is
+# threaded back in via plane_* below and persisted into .project.json so it is
+# the single source of truth shared with the hermes-agent template's agents.
+ticket_provider:
+  type: str
+  help: Ticket board provider this project's board lives in
+  default: plane
+  choices:
+    Linear: linear
+    Plane: plane
+    Trello: trello
+
 # --- Derived (never asked) ---
 
 project_slug:
   type: str
   default: "{{ project_name | lower | replace(' ', '-') | replace('_', '-') }}"
+  when: false
+
+# Board binding — supplied by init-project.sh's --data-file after the board is
+# created. Defaults keep a bare `copier copy` rendering valid (empty binding).
+plane_workspace:
+  type: str
+  default: "33god"
+  when: false
+
+plane_project_id:
+  type: str
+  default: ""
+  when: false
+
+project_identifier:
+  type: str
+  default: "{{ project_slug[:4] | upper }}"
+  when: false
+
+plane_base:
+  type: str
+  default: "https://plane.delo.sh"
   when: false
 
 # Drives conditional blocks in rendered files (e.g. _.python.venv in mise.toml).
@@ -48,7 +83,8 @@ primary_language:
 
 _tasks:
   - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
-  - "chmod +x .mise/scripts/setup-plane.py .mise/tasks/setup 2>/dev/null || true"
   - "ln -sf AGENTS.md CLAUDE.md"
   - "ln -sf AGENTS.md GEMINI.md"
+  # Stamp the repo's absolute path into .project.json (the SOT) post-render.
+  - "python3 -c \"import json,os,pathlib; p=pathlib.Path('.project.json'); d=json.loads(p.read_text()); d['repo_path']=os.getcwd(); p.write_text(json.dumps(d,indent=2)+chr(10))\""
   - "mise trust"
