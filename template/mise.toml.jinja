@@ -13,7 +13,7 @@ _.file = [".env"]
 # any given level of nesting.
 [hooks]
 enter = [
-  "{{config_root}}/.mise/scripts/link-agentfiles.sh",
+  "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh",
   "op inject -i .env.op > .env",
 ]
 
@@ -23,4 +23,4 @@ task = "link-agentfiles"
 
 [tasks.link-agentfiles]
 description = "Symlink all agent files to AGENTS.md"
-run = "{{config_root}}/.mise/scripts/link-agentfiles.sh"
+run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh"
