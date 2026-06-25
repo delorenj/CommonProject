@@ -97,3 +97,4 @@ roo/
 .claude-flow/metrics/task-metrics.json
 .claude-flow/**/*
 .claude-flow
+.claude/
