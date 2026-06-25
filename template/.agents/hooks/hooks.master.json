@@ -1,0 +1,97 @@
+{
+  "$comment": "SINGLE SOURCE OF TRUTH for this repo's project-scoped agent hooks. Hand-edit ONLY this file, then run `mise run hooks-sync` (or re-cd into the repo) to regenerate every per-agent config. Generated files are NOT hand-edited. Pattern: the /ssot-fanout skill. See .agents/hooks/README.md.",
+  "version": 1,
+  "marker": "project-agent-hooks",
+  "hooks": [
+    {
+      "id": "skill-check-reminder",
+      "lifecycle": "user_prompt",
+      "script": "reminder-for-skill-check.sh",
+      "timeout_s": 3,
+      "reads_stdin": false,
+      "description": "Inject a project-skills + BMAD-recap reminder into each prompt."
+    },
+    {
+      "id": "hindsight-recall",
+      "lifecycle": "user_prompt",
+      "script": "hindsight/hindsight-recall.sh",
+      "timeout_s": 5,
+      "reads_stdin": true,
+      "description": "Recall Hindsight memories for the prompt (no-ops gracefully if the hindsight CLI is absent)."
+    },
+    {
+      "id": "hindsight-retain",
+      "lifecycle": "post_tool",
+      "script": "hindsight/hindsight-retain.sh",
+      "matcher": "Write|Edit|MultiEdit",
+      "timeout_s": 5,
+      "reads_stdin": true,
+      "description": "Retain file edits into Hindsight after Write/Edit/MultiEdit."
+    },
+    {
+      "id": "hindsight-session-end",
+      "lifecycle": "session_end",
+      "script": "hindsight/hindsight-session-end.sh",
+      "timeout_s": 5,
+      "reads_stdin": true,
+      "description": "Capture a session summary + write a Hindsight journal entry on stop."
+    }
+  ],
+  "agents": {
+    "claude": {
+      "enabled": true,
+      "dialect": "claude_settings",
+      "config_target": ".claude/settings.json",
+      "base_dir": "$CLAUDE_PROJECT_DIR/.agents/hooks",
+      "timeout_unit": "s",
+      "owns_hooks_key": true,
+      "lifecycle_events": {
+        "user_prompt": "UserPromptSubmit",
+        "post_tool": "PostToolUse",
+        "session_end": "Stop"
+      },
+      "notes": "Committed to the repo, so every dev gets these automatically with NO bootstrap. Claude expands $CLAUDE_PROJECT_DIR in hook commands at runtime. sync owns the entire `hooks` key of this file."
+    },
+    "codex": {
+      "enabled": true,
+      "dialect": "codex_hooks",
+      "config_target": "~/.codex/hooks.json",
+      "base_dir": "{repo}/.agents/hooks",
+      "timeout_unit": "ms",
+      "lifecycle_events": {
+        "user_prompt": "UserPromptSubmit",
+        "post_tool": "PostToolUse",
+        "session_end": "Stop"
+      },
+      "notes": "Codex has no project-scoped hook file, so sync INJECTS absolute-path entries into the per-user ~/.codex/hooks.json on `mise enter` and REMOVES them on `mise leave`. Idempotent; backs up to ~/.codex/hooks.json.caf-bak before first write. Set CAF_HOOKS_SKIP_CODEX=1 to opt out (e.g. if you already run these hooks globally)."
+    },
+    "hermes": {
+      "enabled": true,
+      "dialect": "hermes_config",
+      "config_target": "agents/hermes/pm/runtime/config.yaml",
+      "allowlist_target": "agents/hermes/pm/runtime/shell-hooks-allowlist.json",
+      "adapter": "hermes/hindsight-hook.sh",
+      "runner": "bash {repo}/.agents/hooks/hermes/hindsight-hook.sh",
+      "timeout_s": 5,
+      "lifecycle_events": {
+        "post_tool": "post_tool_call",
+        "session_end": "on_session_end"
+      },
+      "notes": "Hermes runs hooks shell=False (argv) with the payload as JSON on stdin and requires commands in shell-hooks-allowlist.json. It has NO user-prompt event, so hindsight-recall is not wired. Instead of the Claude-shaped scripts, Hermes uses the ADAPTER (hermes/hindsight-hook.sh) which translates the Hermes payload and pins the project bank (repo basename) (resolve_bank from the runtime cwd would resolve to the PM submodule). sync merges into the per-deployment runtime config.yaml + allowlist (idempotent, backed up, skipped if the runtime is absent). Disable per-dev via local.json disabled_agents:[\"hermes\"]."
+    },
+    "kimi": {
+      "enabled": true,
+      "dialect": "kimi_config",
+      "config_target": "~/.kimi-code/config.toml",
+      "config_home_env": "KIMI_CODE_HOME",
+      "base_dir": "{repo}/.agents/hooks",
+      "timeout_unit": "s",
+      "lifecycle_events": {
+        "user_prompt": "UserPromptSubmit",
+        "post_tool": "PostToolUse",
+        "session_end": "Stop"
+      },
+      "notes": "Kimi Code CLI hooks live in the per-user ~/.kimi-code/config.toml (KIMI_CODE_HOME overrides) as a `hooks` array of {event,command,matcher?,timeout}. Kimi is Claude-compatible: identical event names, payload {hook_event_name,session_id,cwd,prompt} / {tool_name,tool_input} on stdin, shell:true commands, timeout in SECONDS, edit tools named Write/Edit. So it reuses the SAME scripts (guard-wrapped) as claude/codex. No project-local config.toml exists, so sync INJECTS a sentinel-bounded [[hooks]] block on enter and removes it on leave (idempotent text-merge, backs up to config.toml.caf-bak). Disable per-dev via local.json disabled_agents:[\"kimi\"]."
+    }
+  }
+}

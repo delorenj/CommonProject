@@ -98,3 +98,8 @@ roo/
 .claude-flow/**/*
 .claude-flow
 .claude/
+
+# pjangler vendors this repo as a submodule and npm-packlist honors .gitignore
+# when packing; template/.env.op is template PAYLOAD (op:// references, not
+# secrets) and must never be stripped from the published tarball (pjangler PJAN-2).
+!template/.env.op

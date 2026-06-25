@@ -1,0 +1,15 @@
+{
+  "$comment": "PER-DEV LOCAL OVERRIDES — copy this file to .agents/local.json (gitignored) and edit. Lets you opt out of individual hooks, whole agents, or specific auto-linked skills, and tune how project skills fan out to your agent CLIs — without touching committed config. Hooks self-skip at RUNTIME via .agents/hooks/lib/hook-guard.sh (so even Claude's committed hooks honor it); codex/hermes injections additionally skip at INSTALL time. Re-run `mise run hooks-sync` / `mise run skills-relink` (or re-cd into the repo) after editing.",
+  "hooks": {
+    "$disabled_help": "Hook ids from .agents/hooks/hooks.master.json: skill-check-reminder, hindsight-recall, hindsight-retain, hindsight-session-end. Listed ids are skipped at runtime across ALL agents.",
+    "disabled": [],
+    "$disabled_agents_help": "Agent keys: claude, codex, kimi, hermes. Listed agents are NOT installed (codex/kimi/hermes injections are skipped/removed). Claude's hooks are committed and can't be fully removed per-dev — disable them individually via `disabled` instead.",
+    "disabled_agents": []
+  },
+  "skills": {
+    "$disabled_help": "Skill directory names under .agents/skills/. Listed skills are NOT symlinked into any agent CLI dir for you, and are pruned from your managed mirrors.",
+    "disabled": [],
+    "$defer_to_global_help": "Set true ONLY if you run a global agent system at ~/.agents/skills. When true, the linker skips any project skill whose name also exists in your global SSOT, so your global copy wins and you get ZERO duplicates/conflicts (and yields the slot in shared dirs like ~/.codex/skills). Teammates with no global layer leave this false (the default) and inherit the FULL project skill set. Override the global dir with the AGENTS_GLOBAL_SKILLS_DIR env var.",
+    "defer_to_global": false
+  }
+}

@@ -83,6 +83,8 @@ primary_language:
 
 _tasks:
   - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
+  # Ensure secrets + per-dev agent-hook/skill overrides are ignored (appended after the base ignore).
+  - "printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.kimi-code/\\n.lastagent\\n**/.claude/settings.local.json\\n' >> .gitignore"
   - "ln -sf AGENTS.md CLAUDE.md"
   - "ln -sf AGENTS.md GEMINI.md"
   # Stamp the repo's absolute path into .project.json (the SOT) post-render.
