@@ -15,7 +15,7 @@ _.file = [".env"]
 enter = [
   "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh",
   "op inject -i .env.op > .env",
-  "codegraph sync",
+  "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh",
   "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh",
   "{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py --install --quiet",
 ]
