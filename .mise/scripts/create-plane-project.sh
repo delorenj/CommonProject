@@ -59,6 +59,32 @@ PLANE_BASE_URL="${PLANE_BASE_URL:-https://plane.delo.sh}"
     echo "  Identifier: $PROJECT_IDENTIFIER"
 } >&2
 
+# ── Find-or-link by NAME first (repo name is the primary key) ────────────────
+# Plane does NOT enforce unique project names, so a bare POST would create a
+# DUPLICATE whenever a board of this name already exists (an earlier init, or
+# the hermes-agent flow). Search by name and reuse the match before creating.
+NAME_LIST=$(curl -s -X GET \
+    "${PLANE_BASE_URL}/api/v1/workspaces/${WORKSPACE}/projects/?per_page=200" \
+    -H "X-Api-Key: ${PLANE_API_KEY}" \
+    -H "Content-Type: application/json")
+EXISTING_BY_NAME=$(echo "$NAME_LIST" | PLANE_NAME="$PROJECT_NAME" python3 -c "
+import json, os, sys
+want = os.environ['PLANE_NAME'].strip().lower()
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+items = data.get('results', data) if isinstance(data, dict) else data
+for p in items or []:
+    if str(p.get('name', '')).strip().lower() == want:
+        print(p['id']); break
+" 2>/dev/null || true)
+if [[ -n "$EXISTING_BY_NAME" ]]; then
+    echo -e "${GREEN}✓ Linking existing Plane project by name '${PROJECT_NAME}' (id=${EXISTING_BY_NAME})${NC}" >&2
+    echo "$EXISTING_BY_NAME"
+    exit 0
+fi
+
 # Create project via Plane API
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     "${PLANE_BASE_URL}/api/v1/workspaces/${WORKSPACE}/projects/" \
