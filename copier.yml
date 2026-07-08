@@ -79,8 +79,41 @@ primary_language:
   default: python
   when: false
 
-# --- Post-generation tasks ---
+# Whether to scaffold the project-scoped agent-hooks + skill fan-out layer
+# (.agents/hooks + the mise enter/leave wiring that injects into each agent CLI's
+# per-user config). Defaults true so a bare `copier copy` still gets it. pjangler
+# passes `--data agent_hooks_layer=false` when the machine already runs a GLOBAL
+# agent-hooks install (~/.agents/hooks) — so a fresh project never re-injects the
+# same hooks into shared per-user configs like ~/.codex or ~/.kimi-code.
+agent_hooks_layer:
+  type: bool
+  default: true
+  when: false
 
+# When agent_hooks_layer is false, omit the project-scoped hook tree + skill-link
+# scripts entirely (the mise.toml wiring is already gated inside the template).
+# The `.copier-noop-never-matches` sentinel keeps every pattern non-empty when the
+# layer is enabled, which copier requires.
+_exclude:
+  - "copier.yml"
+  - "~*"
+  - "*.py[co]"
+  - "__pycache__"
+  - ".git"
+  - ".DS_Store"
+  - ".svn"
+  - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/hooks{% endif %}"
+  - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/hooks/**{% endif %}"
+  - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/local.example.json{% endif %}"
+  - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.mise/scripts/link-project-skills-to-clis.sh{% endif %}"
+  - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.mise/scripts/unlink-project-skills-from-clis.sh{% endif %}"
+
+# --- Post-generation tasks ---
+#
+# NOTE: intentionally does NOT run `mise trust`. Trusting the repo fires the mise
+# `[hooks].enter` array, which (when the agent-hooks layer is present) injects
+# into the caller's shared per-user CLI configs. Scaffolding must never mutate
+# global state as a side effect — the operator trusts/enters the repo themselves.
 _tasks:
   - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
   # Ensure secrets + per-dev agent-hook/skill overrides are ignored (appended after the base ignore).
@@ -89,4 +122,3 @@ _tasks:
   - "ln -sf AGENTS.md GEMINI.md"
   # Stamp the repo's absolute path into .project.json (the SOT) post-render.
   - "python3 -c \"import json,os,pathlib; p=pathlib.Path('.project.json'); d=json.loads(p.read_text()); d['repo_path']=os.getcwd(); p.write_text(json.dumps(d,indent=2)+chr(10))\""
-  - "mise trust"

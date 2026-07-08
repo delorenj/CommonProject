@@ -16,27 +16,31 @@ enter = [
   "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh",
   "op inject -i .env.op > .env",
   "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh",
+{%- if agent_hooks_layer %}
   "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh",
   "{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py --install --quiet",
+{%- endif %}
 ]
+{%- if agent_hooks_layer %}
 leave = [
   "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/unlink-project-skills-from-clis.sh",
   "{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py --uninstall --quiet",
 ]
+{%- endif %}
 
 [[watch_files]]
 patterns = ["AGENTS.md"]
 task = "link-agentfiles"
-
+{% if agent_hooks_layer %}
 # Re-fan-out the agent hooks whenever the single source of truth changes.
 [[watch_files]]
 patterns = [".agents/hooks/hooks.master.json"]
 task = "hooks-sync"
-
+{% endif %}
 [tasks.link-agentfiles]
 description = "Symlink all agent files to AGENTS.md"
 run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh"
-
+{% if agent_hooks_layer %}
 # --- Project-scoped agent hooks + skill fan-out (see .agents/hooks/README.md) ---
 
 [tasks.hooks-sync]
@@ -62,7 +66,7 @@ run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/unlink-project-skills-
 [tasks.skills-relink]
 description = "Re-fan the project skill set to all CLIs"
 run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh"
-
+{% endif %}
 [tasks.hindsight-setup]
 description = "Provision this dev's shared project Hindsight key from 1Password into .env (op inject)"
 run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/hindsight-setup.sh"
