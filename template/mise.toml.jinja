@@ -11,21 +11,27 @@ _.file = [".env"]
 # TODO: Ensure this works for all levels of nesting.
 # i.e. All linked agent files MUST be siblings at
 # any given level of nesting.
-[hooks]
-enter = [
-  "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh",
-  "op inject -i .env.op > .env",
-  "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh",
+#
+# NOTE: hooks are an array of [[hooks.enter]] tables (NOT enter = [ ... ]) and
+# every {{config_root}} path is single-quoted so it survives a space in the
+# project path — mise runs each `script` via `sh -c`.
+[[hooks.enter]]
+script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh'"
+[[hooks.enter]]
+script = "op inject -i .env.op > .env"
+[[hooks.enter]]
+script = "[ -f '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' ] && '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' || true"
 {%- if agent_hooks_layer %}
-  "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh",
-  "{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py --install --quiet",
+[[hooks.enter]]
+script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh'"
+[[hooks.enter]]
+script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --install --quiet"
 {%- endif %}
-]
 {%- if agent_hooks_layer %}
-leave = [
-  "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/unlink-project-skills-from-clis.sh",
-  "{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py --uninstall --quiet",
-]
+[[hooks.leave]]
+script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/unlink-project-skills-from-clis.sh'"
+[[hooks.leave]]
+script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall --quiet"
 {%- endif %}
 
 [[watch_files]]
@@ -39,34 +45,34 @@ task = "hooks-sync"
 {% endif %}
 [tasks.link-agentfiles]
 description = "Symlink all agent files to AGENTS.md"
-run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh'"
 {% if agent_hooks_layer %}
 # --- Project-scoped agent hooks + skill fan-out (see .agents/hooks/README.md) ---
 
 [tasks.hooks-sync]
 description = "Fan out .agents/hooks/hooks.master.json to each agent CLI (claude committed; codex/kimi injected; hermes adapter)"
-run = "{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py --install"
+run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --install"
 
 [tasks.hooks-check]
 description = "Drift gate: verify generated hook configs match hooks.master.json (CI-safe, read-only)"
-run = "{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py --check"
+run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --check"
 
 [tasks.hooks-uninstall]
 description = "Remove per-user agent-hook injections (codex/kimi/hermes)"
-run = "{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py --uninstall"
+run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall"
 
 [tasks.link-project-skills-to-clis]
 description = "Fan .agents/skills out to each agent CLI; honors local.json defer_to_global + disabled"
-run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh'"
 
 [tasks.unlink-project-skills-from-clis]
 description = "Remove project skill symlinks from shared per-CLI dirs"
-run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/unlink-project-skills-from-clis.sh"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/unlink-project-skills-from-clis.sh'"
 
 [tasks.skills-relink]
 description = "Re-fan the project skill set to all CLIs"
-run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh'"
 {% endif %}
 [tasks.hindsight-setup]
 description = "Provision this dev's shared project Hindsight key from 1Password into .env (op inject)"
-run = "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/hindsight-setup.sh"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/hindsight-setup.sh'"
