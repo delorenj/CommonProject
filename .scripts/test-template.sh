@@ -63,6 +63,17 @@ assertions=$((assertions + 1))
 
 bash "$AUTHORITY_CHECK" "$OUT"
 
+# Prove the guard rejects a manifest-only resurrection even when no workflow
+# body or generated command path exists.
+negative_root="$OUT_ROOT/authority-negative"
+mkdir -p "$negative_root/_bmad/_config"
+printf 'ticket-lifecycle\n' > "$negative_root/_bmad/_config/workflow-manifest.csv"
+assertions=$((assertions + 1))
+if bash "$AUTHORITY_CHECK" "$negative_root" >/dev/null 2>&1; then
+    echo "✗ authority checker accepted a forbidden manifest registration"
+    fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "✓ All $assertions structural assertions passed"
     echo "  Rendered at: $OUT"
