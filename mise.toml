@@ -28,7 +28,7 @@ create-plane-project = { run = ".mise/scripts/create-plane-project.sh", descript
 test-template = { run = "bash .scripts/test-template.sh", description = "Run template test scenarios" }
 
 # Template linting
-lint-template = { run = "copier lint", description = "Lint the Copier template" }
+lint-template = { run = "bash -n .scripts/*.sh && copier copy --trust --defaults --pretend --overwrite --data project_name='Lint Probe' --data project_description='Validate CommonProject template' . /tmp/commonproject-template-lint", description = "Validate shell syntax and Copier template rendering" }
 
 # Development
 dev = { run = "echo 'Run: mise run init-project'", description = "Placeholder for project-specific dev" }
