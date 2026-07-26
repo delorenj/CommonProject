@@ -90,8 +90,9 @@ agent_hooks_layer:
   default: true
   when: false
 
-# When agent_hooks_layer is false, omit the project-scoped hook tree + skill-link
-# scripts entirely (the mise.toml wiring is already gated inside the template).
+# When agent_hooks_layer is false, omit only the project-scoped hook tree. The
+# skills manifest stays — sync-skills.py writes project-local CLI dirs and is safe
+# even on machines that already run a global ~/.agents/hooks install.
 # The `.copier-noop-never-matches` sentinel keeps every pattern non-empty when the
 # layer is enabled, which copier requires.
 _exclude:
@@ -105,8 +106,6 @@ _exclude:
   - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/hooks{% endif %}"
   - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/hooks/**{% endif %}"
   - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/local.example.json{% endif %}"
-  - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.mise/scripts/link-project-skills-to-clis.sh{% endif %}"
-  - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.mise/scripts/unlink-project-skills-from-clis.sh{% endif %}"
 
 # --- Post-generation tasks ---
 #

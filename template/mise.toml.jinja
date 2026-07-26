@@ -2,7 +2,7 @@
 # https://mise.jdx.dev/configuration.html
 
 [env]
-_.path = [".mise/scripts", "agents/hermes/pm"]
+_.path = [".mise/scripts", "agents/hermes/pm", "~/.agents/scripts"]
 _.file = [".env"]
 
 # This block will handle the linking of
@@ -20,16 +20,14 @@ script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh
 [[hooks.enter]]
 script = "op inject -i .env.op > .env"
 [[hooks.enter]]
+script = "sync-skills.py --scope project"
+[[hooks.enter]]
 script = "[ -f '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' ] && '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' || true"
 {%- if agent_hooks_layer %}
-[[hooks.enter]]
-script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh'"
 [[hooks.enter]]
 script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --install --quiet"
 {%- endif %}
 {%- if agent_hooks_layer %}
-[[hooks.leave]]
-script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/unlink-project-skills-from-clis.sh'"
 [[hooks.leave]]
 script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall --quiet"
 {%- endif %}
@@ -37,6 +35,9 @@ script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninsta
 [[watch_files]]
 patterns = ["AGENTS.md"]
 task = "link-agentfiles"
+[[watch_files]]
+patterns = [".agents/skills.json"]
+task = "skills-sync"
 {% if agent_hooks_layer %}
 # Re-fan-out the agent hooks whenever the single source of truth changes.
 [[watch_files]]
@@ -46,6 +47,10 @@ task = "hooks-sync"
 [tasks.link-agentfiles]
 description = "Symlink all agent files to AGENTS.md"
 run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh'"
+
+[tasks.skills-sync]
+description = "Sync skills from manifest to local CLI dirs"
+run = "sync-skills.py --scope project"
 {% if agent_hooks_layer %}
 # --- Project-scoped agent hooks + skill fan-out (see .agents/hooks/README.md) ---
 
@@ -60,18 +65,6 @@ run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --check"
 [tasks.hooks-uninstall]
 description = "Remove per-user agent-hook injections (codex/kimi/hermes)"
 run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall"
-
-[tasks.link-project-skills-to-clis]
-description = "Fan .agents/skills out to each agent CLI; honors local.json defer_to_global + disabled"
-run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh'"
-
-[tasks.unlink-project-skills-from-clis]
-description = "Remove project skill symlinks from shared per-CLI dirs"
-run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/unlink-project-skills-from-clis.sh'"
-
-[tasks.skills-relink]
-description = "Re-fan the project skill set to all CLIs"
-run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-project-skills-to-clis.sh'"
 {% endif %}
 [tasks.hindsight-setup]
 description = "Provision this dev's shared project Hindsight key from 1Password into .env (op inject)"

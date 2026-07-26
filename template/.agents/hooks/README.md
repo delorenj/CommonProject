@@ -15,6 +15,7 @@ master writes zero bytes).
 mise run hooks-sync          # fan out the master -> claude + codex + hermes
 mise run hooks-check         # drift gate (read-only; used in CI)
 mise run hooks-uninstall     # remove codex + hermes injections
+mise run skills-sync         # sync .agents/skills.json -> local CLI skill dirs
 mise run hindsight-setup     # one-time: pull the shared CAF Hindsight key into .env
 ```
 
@@ -70,8 +71,7 @@ Copy [`.agents/local.example.json`](../local.example.json) → `.agents/local.js
   "hooks": {
     "disabled": ["hindsight-recall"],   // hook ids — skipped at runtime, ALL agents
     "disabled_agents": ["codex"]        // claude|codex|hermes — codex/hermes injection skipped/removed
-  },
-  "skills": { "disabled": ["bmad-help"] } // skill dir names — not symlinked for you
+  }
 }
 ```
 
@@ -83,32 +83,18 @@ Copy [`.agents/local.example.json`](../local.example.json) → `.agents/local.js
 - **Disabled agents** are enforced at **install** time (codex/hermes injection is
   skipped, and removed if previously installed). `CAF_HOOKS_SKIP_CODEX=1` is an
   env shortcut for `disabled_agents:["codex"]`.
-- **Disabled skills** are honored by the skill fan-out (below).
+## Skill fan-out — `.agents/skills.json` → each CLI
 
-## Skill fan-out — `.agents/skills` → each CLI
+`.agents/skills.json` is the project's skill manifest. `sync-skills.py --scope
+project` resolves that manifest into project-local CLI dirs (for example
+`./.codex/skills`, `./.hermes/skills`, `./.kimi-code/skills`) and honors
+`inherit_global: true` so a dev's global `~/.agents/skills.json` loadout is
+merged in automatically.
 
-`.agents/skills/` is the project's enabled skill set (committed inherited skills +
-`./skills/*` app skills symlinked in on enter). `link-project-skills-to-clis.sh`
-fans it out as per-skill symlinks to every agent CLI that doesn't read `.agents/`
-natively — a small `SKILL_TARGETS` table:
-
-| CLI | target dir | scope |
-|---|---|---|
-| Codex | `~/.codex/skills` | **global** — link ours in, never clobber foreign entries, removed on `leave` |
-| Kimi | `./.kimi-code/skills` | **local** — a project-scoped mirror we fully manage (stale real copies replaced with symlinks) |
-
-Add a CLI = one `dir|scope` line. Per-dev control via `.agents/local.json`
-`skills`:
-
-- `disabled: [...]` — never link these; pruned from managed mirrors.
-- `defer_to_global: true` — **only if you run a global `~/.agents/skills` system.**
-  Skips any project skill whose name also exists there, so your global copy wins
-  and you get **zero duplicates** (it even yields the slot in `~/.codex/skills`).
-  Teammates with no global layer leave it `false` (default) and **inherit the full
-  set**. Override the global dir with `AGENTS_GLOBAL_SKILLS_DIR`.
-
-Tasks: `mise run skills-relink` (re-fan), `mise run link-project-skills-to-clis`,
-`mise run unlink-project-skills-from-clis`.
+- Project-local skills with the same name shadow the global ones.
+- No `defer_to_global` flag or bash cleanup scripts are needed anymore.
+- The manifest is the only hand-edited skill SSOT; run `mise run skills-sync`
+  after changing it, or just re-enter the repo.
 
 ## Hindsight credentials — `mise run hindsight-setup`
 
@@ -137,6 +123,7 @@ Without a key the hooks **no-op gracefully** — recall/retain just do nothing.
 ```
 .agents/
   local.example.json    # per-dev override template (copy -> local.json, gitignored)
+  skills.json           # project skill manifest (SSOT for sync-skills.py)
   hooks/
     hooks.master.json   # SSOT — the only hand-edited config
     sync.py             # fan-out engine (--install / --uninstall / --check)

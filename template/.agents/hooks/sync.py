@@ -72,10 +72,10 @@ def load_local() -> dict:
     (so even Claude's committed hooks honor them); this only needs disabled
     AGENTS, which gate install. CAF_HOOKS_SKIP_CODEX=1 is an env shortcut.
 
-    `defer_to_global` (under either `hooks` or `skills`) means "I already run
-    these hooks from a global agent system" — so the shared per-user injections
-    (codex/kimi/hermes) are suppressed and actively removed. Claude's committed
-    repo settings are harmless and left in place.
+    `hooks.defer_to_global` means "I already run these hooks from a global agent
+    system" — so the shared per-user injections (codex/kimi/hermes) are
+    suppressed and actively removed. Claude's committed repo settings are
+    harmless and left in place.
     """
     disabled_agents: set[str] = set()
     defer_to_global = False
@@ -84,9 +84,8 @@ def load_local() -> dict:
         try:
             data = json.loads(p.read_text() or "{}")
             hooks_cfg = data.get("hooks") or {}
-            skills_cfg = data.get("skills") or {}
             disabled_agents = set(hooks_cfg.get("disabled_agents") or [])
-            defer_to_global = bool(hooks_cfg.get("defer_to_global")) or bool(skills_cfg.get("defer_to_global"))
+            defer_to_global = bool(hooks_cfg.get("defer_to_global"))
         except (json.JSONDecodeError, OSError) as exc:
             warn(f"ignoring malformed .agents/local.json: {exc}")
     if os.environ.get("CAF_HOOKS_SKIP_CODEX") == "1":
