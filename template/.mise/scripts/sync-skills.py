@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 # The list of agent CLI skill directories (relative to home or project root)
 CLI_SKILL_DIRS = [
@@ -44,6 +45,78 @@ def load_manifest(manifest_path):
         return {"skills": []}
     with open(manifest_path, "r") as handle:
         return json.load(handle)
+
+
+def validate_skill_name(name):
+    if not isinstance(name, str) or not name:
+        raise ValueError("Skill name must be a non-empty string")
+    if name in {".", ".."} or Path(name).is_absolute():
+        raise ValueError(f"Unsafe skill name: {name!r}")
+    if "/" in name or "\\" in name or Path(name).name != name:
+        raise ValueError(f"Skill name must be one path component: {name!r}")
+    return name
+
+
+def manifest_skill_name(skill):
+    if isinstance(skill, str):
+        path = skill if "/" in skill else f"all-skills/{skill}"
+        return validate_skill_name(path.split("/")[-1])
+    if not isinstance(skill, dict):
+        raise ValueError(f"Skill entry must be a string or object: {skill!r}")
+    return validate_skill_name(skill.get("name"))
+
+
+def validate_manifest_skill_names(manifest):
+    skills = manifest.get("skills", [])
+    if not isinstance(skills, list):
+        raise ValueError("Manifest skills must be an array")
+    for skill in skills:
+        manifest_skill_name(skill)
+
+
+def assert_real_directory_chain(root, target):
+    root = root.resolve(strict=True)
+    target = target.absolute()
+    try:
+        relative = target.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"Destination escapes root {root}: {target}") from error
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if not current.exists() and not current.is_symlink():
+            break
+        if current.is_symlink():
+            raise ValueError(f"Refusing symlinked destination directory: {current}")
+        if not current.is_dir():
+            raise ValueError(f"Destination parent is not a directory: {current}")
+
+
+def preflight_cli_dirs(cli_dirs_base, skill_names):
+    base = cli_dirs_base.resolve(strict=True)
+    active = []
+    for cli_rel_path in CLI_SKILL_DIRS:
+        cli_dir = base / cli_rel_path
+        parent = cli_dir.parent
+        if not parent.exists() and not parent.is_symlink():
+            continue
+        assert_real_directory_chain(base, parent)
+        if parent.is_symlink() or not parent.is_dir():
+            raise ValueError(f"Unsafe CLI destination parent: {parent}")
+        if cli_dir.is_symlink():
+            raise ValueError(f"Refusing symlinked CLI skills directory: {cli_dir}")
+        if cli_dir.exists() and not cli_dir.is_dir():
+            raise ValueError(f"CLI skills destination is not a directory: {cli_dir}")
+        real_parent = parent.resolve(strict=True)
+        expected_cli = real_parent / cli_dir.name
+        if cli_dir.exists() and cli_dir.resolve(strict=True) != expected_cli:
+            raise ValueError(f"CLI skills directory escapes its parent: {cli_dir}")
+        for name in skill_names:
+            destination = expected_cli / name
+            if destination.parent != expected_cli or len(destination.relative_to(expected_cli).parts) != 1:
+                raise ValueError(f"Skill destination escapes CLI directory: {destination}")
+        active.append(cli_dir)
+    return active
 
 
 def ensure_cache_dir():
@@ -114,10 +187,10 @@ def resolve_skill_path(
 ):
     if isinstance(skill, str):
         path = skill if "/" in skill else f"all-skills/{skill}"
-        name = path.split("/")[-1]
+        name = validate_skill_name(path.split("/")[-1])
         skill = {"name": name, "registry_path": path}
 
-    name = skill.get("name")
+    name = validate_skill_name(skill.get("name"))
 
     if "registry_path" in skill:
         registry_url = skill.get("registry", default_registry)
@@ -137,9 +210,13 @@ def resolve_skill_path(
         return name, sync_git_skill(
             name, source, skill.get("version"), cache_dir
         )
-    if source.startswith("file://"):
-        local_path = source[len("file://") :]
-        # Resolve relative paths against the directory of the manifest
+    parsed = urlparse(source)
+    if parsed.scheme == "file":
+        if parsed.netloc not in {"", "localhost"}:
+            raise ValueError(f"Non-local file URI authority for skill {name}: {parsed.netloc}")
+        if parsed.query or parsed.fragment:
+            raise ValueError(f"file:// source must encode query/fragment characters: {source}")
+        local_path = Path(unquote(parsed.path))
         full_path = (base_dir / local_path).resolve()
         if not full_path.exists():
             print(
@@ -161,19 +238,19 @@ def fanout_to_cli(cli_dirs_base, skills_map):
     Creates symlinks in each of the CLI_SKILL_DIRS relative to cli_dirs_base
     pointing to the resolved paths in skills_map.
     """
+    skill_names = [validate_skill_name(name) for name in skills_map]
+    active_cli_dirs = preflight_cli_dirs(cli_dirs_base, skill_names)
     linked_total = 0
-    for cli_rel_path in CLI_SKILL_DIRS:
-        cli_dir = cli_dirs_base / cli_rel_path
-
-        # Only fan out if the parent config directory exists
-        # (e.g. only create .gemini/skills if .gemini exists)
-        if not cli_dir.parent.exists():
-            continue
-
+    for cli_dir in active_cli_dirs:
         cli_dir.mkdir(parents=True, exist_ok=True)
+        if cli_dir.is_symlink() or not cli_dir.is_dir():
+            raise ValueError(f"Unsafe CLI skills directory after creation: {cli_dir}")
+        real_cli_dir = cli_dir.resolve(strict=True)
 
         for name, actual_path in skills_map.items():
-            symlink_target = cli_dir / name
+            symlink_target = real_cli_dir / name
+            if symlink_target.parent != real_cli_dir:
+                raise ValueError(f"Skill destination escapes CLI directory: {symlink_target}")
 
             # If it's a symlink already pointing to the right place, skip
             if (
@@ -212,6 +289,7 @@ def main():
     if args.scope == "global":
         print(f"Loading global manifest from {global_manifest_path}")
         manifest = load_manifest(global_manifest_path)
+        validate_manifest_skill_names(manifest)
         default_registry = manifest.get(
             "registry", "https://github.com/delorenj/skillex.git"
         )
@@ -233,6 +311,7 @@ def main():
     elif args.scope == "project":
         print(f"Loading project manifest from {project_manifest_path}")
         manifest = load_manifest(project_manifest_path)
+        validate_manifest_skill_names(manifest)
         default_registry = manifest.get(
             "registry", "https://github.com/delorenj/skillex.git"
         )
@@ -241,6 +320,7 @@ def main():
         if manifest.get("inherit_global", False):
             print("Inheriting global skills...")
             global_manifest = load_manifest(global_manifest_path)
+            validate_manifest_skill_names(global_manifest)
             global_registry = global_manifest.get(
                 "registry", "https://github.com/delorenj/skillex.git"
             )
