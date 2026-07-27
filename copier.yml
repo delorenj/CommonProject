@@ -119,5 +119,8 @@ _tasks:
   - "printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.kimi-code/\\n.lastagent\\n**/.claude/settings.local.json\\n' >> .gitignore"
   - "ln -sf AGENTS.md CLAUDE.md"
   - "ln -sf AGENTS.md GEMINI.md"
+  # Materialize the pinned Skillex BMAD manifest + symlink topology without
+  # copying pack content or disturbing project-specific, non-BMAD skills.
+  - "python3 .mise/scripts/provision-bmad-skills.py"
   # Stamp the repo's absolute path into .project.json (the SOT) post-render.
   - "python3 -c \"import json,os,pathlib; p=pathlib.Path('.project.json'); d=json.loads(p.read_text()); d['repo_path']=os.getcwd(); p.write_text(json.dumps(d,indent=2)+chr(10))\""
