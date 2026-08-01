@@ -8,8 +8,10 @@ import hashlib
 import os
 import shutil
 import stat
+import tempfile
 import tomllib
 from pathlib import Path
+from typing import Callable
 
 
 BMAD_PACK_VERSION = "6.10.1-next.31"
@@ -211,34 +213,63 @@ def prepare_project_skill_dirs(project_root: Path) -> tuple[Path, Path]:
     return agents_dir, skills_dir
 
 
-def replace_with_symlink(link: Path, target: Path) -> bool:
-    if link.is_symlink() and link.resolve(strict=False) == target:
-        return False
-    if link.is_symlink() or link.is_file():
-        link.unlink()
-    elif link.exists():
-        shutil.rmtree(link)
-    link.symlink_to(target, target_is_directory=True)
-    return True
+def lexical_link_target(link: Path) -> Path | None:
+    if not link.is_symlink():
+        return None
+    target = Path(os.readlink(link))
+    return (target if target.is_absolute() else link.parent / target).absolute()
 
 
-def main() -> None:
-    root = pack_root()
+def remove_entry(path: Path) -> None:
     try:
-        pack_skills = validate_trusted_pack(root)
-    except (FileNotFoundError, OSError, ValueError) as error:
-        raise SystemExit(
-            f"BMAD Skillex pack {BMAD_PACK_VERSION} is not trusted at {root}: {error}; "
-            "set PJ_BMAD_PACK_ROOT to the installed canonical pack"
-        ) from error
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def atomic_write(path: Path, content: bytes, mode: int) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(mode)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def provision(
+    *,
+    after_preflight: Callable[[], None] | None = None,
+    create_link: Callable[[Path, Path, int], None] | None = None,
+) -> int:
+    root = pack_root()
+    pack_skills = validate_trusted_pack(root)
+    if after_preflight is not None:
+        after_preflight()
 
     project_root = Path.cwd().resolve(strict=True)
+    agents_path = project_root / ".agents"
+    skills_path = agents_path / "skills"
+    agents_existed = agents_path.exists() or agents_path.is_symlink()
+    skills_existed = skills_path.exists() or skills_path.is_symlink()
     agents_dir, skills_dir = prepare_project_skill_dirs(project_root)
     manifest_path = agents_dir / "skills.json"
     if manifest_path.is_symlink():
         raise ValueError(f"Refusing symlinked skills manifest: {manifest_path}")
     if manifest_path.exists() and not manifest_path.is_file():
         raise ValueError(f"Skills manifest is not a regular file: {manifest_path}")
+    manifest_existed = manifest_path.exists()
+    manifest_bytes = read_regular_file(manifest_path) if manifest_existed else None
+    manifest_mode = stat.S_IMODE(manifest_path.lstat().st_mode) if manifest_existed else 0o644
     manifest = load_manifest(manifest_path)
     existing = manifest.get("skills", [])
     if not isinstance(existing, list):
@@ -251,30 +282,108 @@ def main() -> None:
         *[entry for entry in existing if not is_bmad_entry(entry)],
         *[{"name": path.name, "source": path.as_uri()} for path in pack_skills],
     ]
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    next_manifest = json.dumps(manifest, indent=2) + "\n"
-    if not manifest_path.exists() or manifest_path.read_text() != next_manifest:
-        manifest_path.write_text(next_manifest)
-
+    next_manifest = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
     expected = {path.name: path for path in pack_skills}
-    changed = 0
+    affected: list[str] = []
     for entry in skills_dir.iterdir():
         if entry.parent.resolve(strict=True) != skills_dir.resolve(strict=True):
             raise ValueError(f"BMAD skill entry escapes skills directory: {entry}")
-        if entry.name.startswith("bmad-") and entry.name not in expected:
-            if entry.is_symlink() or entry.is_file():
-                entry.unlink()
-            else:
-                shutil.rmtree(entry)
-            changed += 1
+        if entry.name.startswith("bmad-"):
+            validate_skill_name(entry.name)
+            target = expected.get(entry.name)
+            if target is None or lexical_link_target(entry) != target:
+                affected.append(entry.name)
     for name, target in expected.items():
         link = skills_dir / validate_skill_name(name)
         if link.parent.resolve(strict=True) != skills_dir.resolve(strict=True):
             raise ValueError(f"BMAD skill destination escapes skills directory: {link}")
-        changed += int(replace_with_symlink(link, target))
+        if lexical_link_target(link) != target and name not in affected:
+            affected.append(name)
+
+    manifest_changed = manifest_bytes != next_manifest
+    if not affected and not manifest_changed:
+        validate_trusted_pack(root)
+        return 0
+
+    transaction = Path(tempfile.mkdtemp(prefix=".bmad-transaction-", dir=agents_dir))
+    backup = transaction / "entries"
+    backup.mkdir()
+    moved: list[str] = []
+    created: list[str] = []
+
+    def rollback() -> None:
+        errors: list[str] = []
+        for name in reversed(created):
+            try:
+                remove_entry(skills_dir / name)
+            except OSError as error:
+                errors.append(f"remove {name}: {error}")
+        for name in reversed(moved):
+            try:
+                remove_entry(skills_dir / name)
+                os.replace(backup / name, skills_dir / name)
+            except OSError as error:
+                errors.append(f"restore {name}: {error}")
+        try:
+            if manifest_bytes is None:
+                remove_entry(manifest_path)
+            else:
+                atomic_write(manifest_path, manifest_bytes, manifest_mode)
+        except OSError as error:
+            errors.append(f"restore manifest: {error}")
+        shutil.rmtree(transaction, ignore_errors=True)
+        try:
+            if not skills_existed and skills_dir.exists() and not any(skills_dir.iterdir()):
+                skills_dir.rmdir()
+            if not agents_existed and agents_dir.exists() and not any(agents_dir.iterdir()):
+                agents_dir.rmdir()
+        except OSError as error:
+            errors.append(f"remove created directories: {error}")
+        if errors:
+            raise RuntimeError("BMAD rollback was incomplete: " + "; ".join(errors))
+
+    link_creator = create_link or (
+        lambda target, link, _index: link.symlink_to(target, target_is_directory=True)
+    )
+    try:
+        for name in affected:
+            entry = skills_dir / name
+            if entry.exists() or entry.is_symlink():
+                os.replace(entry, backup / name)
+                moved.append(name)
+        for index, (name, target) in enumerate(expected.items(), start=1):
+            link = skills_dir / name
+            if lexical_link_target(link) == target:
+                continue
+            link_creator(target, link, index)
+            created.append(name)
+        if manifest_changed:
+            atomic_write(manifest_path, next_manifest, manifest_mode)
+        postflight = validate_trusted_pack(root)
+        if [path.name for path in postflight] != list(expected):
+            raise ValueError("BMAD pack inventory changed after preflight")
+    except Exception as error:
+        try:
+            rollback()
+        except Exception as rollback_error:
+            raise RuntimeError(f"BMAD provisioning failed ({error}); {rollback_error}") from error
+        raise
+
+    shutil.rmtree(transaction)
+    return len(affected)
+
+
+def main() -> None:
+    try:
+        changed = provision()
+    except (FileNotFoundError, OSError, ValueError, RuntimeError) as error:
+        raise SystemExit(
+            f"BMAD Skillex pack {BMAD_PACK_VERSION} provisioning failed: {error}; "
+            "set PJ_BMAD_PACK_ROOT to the installed canonical pack"
+        ) from error
 
     print(
-        f"bmad-skills: {len(pack_skills)} skills from pack "
+        f"bmad-skills: {BMAD_PACK_SKILL_COUNT} skills from pack "
         f"{BMAD_PACK_VERSION}; {changed} symlink(s) updated"
     )
 
