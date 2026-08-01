@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "template" / ".mise" / "scripts" / "sync-skills.py"
+PROVISION_SCRIPT = ROOT / "template" / ".mise" / "scripts" / "provision-bmad-skills.py"
 SPEC = importlib.util.spec_from_file_location("sync_skills", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 SYNC = importlib.util.module_from_spec(SPEC)
@@ -27,6 +28,14 @@ class SyncSkillsTopologyTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_shipped_skill_scripts_are_executable(self) -> None:
+        for script in (PROVISION_SCRIPT, SCRIPT):
+            self.assertNotEqual(
+                script.stat().st_mode & 0o111,
+                0,
+                f"fresh template script must be executable: {script}",
+            )
 
     def test_canonical_claude_alias_is_accepted_without_mutating_managed_projection(self) -> None:
         managed = self.project / ".agents" / "skills"
@@ -76,6 +85,35 @@ class SyncSkillsTopologyTests(unittest.TestCase):
 
         self.assertFalse((codex / "skills").exists())
         self.assertTrue((claude / "skills").is_symlink())
+
+    def test_parent_swap_after_preflight_cannot_mutate_outside_project(self) -> None:
+        codex = self.project / ".codex"
+        codex.mkdir()
+        outside = self.root / "outside"
+        outside_skill = outside / "skills" / "managed-example"
+        outside_skill.mkdir(parents=True)
+        (outside / "sentinel").write_text("outside must survive\n")
+        (outside_skill / "user-data").write_text("do not delete\n")
+        active = SYNC.preflight_cli_dirs(self.project, ["managed-example"])
+        original_codex = self.project / ".codex-original"
+
+        def swap_parent() -> None:
+            codex.rename(original_codex)
+            codex.symlink_to(outside, target_is_directory=True)
+
+        with self.assertRaisesRegex(ValueError, "symlinked destination directory"):
+            SYNC.fanout_to_cli(
+                self.project,
+                {"managed-example": self.source},
+                active_cli_dirs=active,
+                before_mutation=swap_parent,
+            )
+
+        self.assertTrue(codex.is_symlink())
+        self.assertFalse((original_codex / "skills").exists())
+        self.assertEqual((outside / "sentinel").read_text(), "outside must survive\n")
+        self.assertEqual((outside_skill / "user-data").read_text(), "do not delete\n")
+        self.assertTrue(outside_skill.is_dir())
 
 
 if __name__ == "__main__":

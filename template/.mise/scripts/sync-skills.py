@@ -150,6 +150,22 @@ def preflight_cli_dirs(cli_dirs_base, skill_names):
     return active
 
 
+def revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli):
+    """Revalidate the complete destination chain at the mutation boundary."""
+    base = cli_dirs_base.resolve(strict=True)
+    assert_real_directory_chain(base, cli_dir.parent)
+    if cli_dir.parent.is_symlink() or not cli_dir.parent.is_dir():
+        raise ValueError(f"Unsafe CLI destination parent after preflight: {cli_dir.parent}")
+    current_expected = cli_dir.parent.resolve(strict=True) / cli_dir.name
+    if current_expected != expected_cli:
+        raise ValueError(f"CLI destination parent changed after preflight: {cli_dir}")
+    if cli_dir.is_symlink():
+        raise ValueError(f"CLI skills directory changed to a symlink after preflight: {cli_dir}")
+    if cli_dir.exists():
+        if not cli_dir.is_dir() or cli_dir.resolve(strict=True) != expected_cli:
+            raise ValueError(f"Unsafe CLI skills directory after preflight: {cli_dir}")
+
+
 def ensure_cache_dir():
     cache_dir = Path(os.path.expanduser("~/.agents/.cache/skills"))
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -264,7 +280,9 @@ def resolve_skill_path(
     return name, None
 
 
-def fanout_to_cli(cli_dirs_base, skills_map, active_cli_dirs=None):
+def fanout_to_cli(
+    cli_dirs_base, skills_map, active_cli_dirs=None, before_mutation=None
+):
     """
     Creates symlinks in each of the CLI_SKILL_DIRS relative to cli_dirs_base
     pointing to the resolved paths in skills_map.
@@ -272,18 +290,18 @@ def fanout_to_cli(cli_dirs_base, skills_map, active_cli_dirs=None):
     skill_names = [validate_skill_name(name) for name in skills_map]
     if active_cli_dirs is None:
         active_cli_dirs = preflight_cli_dirs(cli_dirs_base, skill_names)
+    if before_mutation is not None:
+        before_mutation()
     linked_total = 0
     for cli_dir, expected_cli in active_cli_dirs:
+        revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli)
         if not cli_dir.is_symlink():
             cli_dir.mkdir(parents=True, exist_ok=True)
-        if cli_dir.is_symlink():
-            if cli_dir.resolve(strict=True) != expected_cli:
-                raise ValueError(f"CLI skills alias changed after preflight: {cli_dir}")
-        elif not cli_dir.is_dir():
-            raise ValueError(f"Unsafe CLI skills directory after creation: {cli_dir}")
+        revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli)
         real_cli_dir = expected_cli.resolve(strict=True)
 
         for name, actual_path in skills_map.items():
+            revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli)
             symlink_target = real_cli_dir / name
             if symlink_target.parent != real_cli_dir:
                 raise ValueError(f"Skill destination escapes CLI directory: {symlink_target}")
@@ -297,11 +315,13 @@ def fanout_to_cli(cli_dirs_base, skills_map, active_cli_dirs=None):
 
             # If it exists but is wrong, remove it
             if symlink_target.exists() or symlink_target.is_symlink():
+                revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli)
                 if symlink_target.is_dir() and not symlink_target.is_symlink():
                     shutil.rmtree(symlink_target)
                 else:
                     symlink_target.unlink()
 
+            revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli)
             os.symlink(actual_path, symlink_target)
             linked_total += 1
             print(f"→ {symlink_target} -> {actual_path}")
