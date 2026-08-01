@@ -104,18 +104,49 @@ def preflight_cli_dirs(cli_dirs_base, skill_names):
         if parent.is_symlink() or not parent.is_dir():
             raise ValueError(f"Unsafe CLI destination parent: {parent}")
         if cli_dir.is_symlink():
-            raise ValueError(f"Refusing symlinked CLI skills directory: {cli_dir}")
-        if cli_dir.exists() and not cli_dir.is_dir():
-            raise ValueError(f"CLI skills destination is not a directory: {cli_dir}")
-        real_parent = parent.resolve(strict=True)
-        expected_cli = real_parent / cli_dir.name
-        if cli_dir.exists() and cli_dir.resolve(strict=True) != expected_cli:
-            raise ValueError(f"CLI skills directory escapes its parent: {cli_dir}")
+            # Generated projects intentionally expose the single managed skill
+            # projection to Claude as `.claude/skills -> ../.agents/skills`.
+            # Accept only that exact lexical alias.  Resolving an arbitrary
+            # directory symlink here would let cleanup below traverse outside
+            # the project (or through a broken target) before failing.
+            raw_target = os.readlink(cli_dir)
+            canonical_alias = (
+                cli_rel_path == ".claude/skills"
+                and raw_target == "../.agents/skills"
+            )
+            managed_skills = base / ".agents" / "skills"
+            if not canonical_alias:
+                raise ValueError(f"Refusing symlinked CLI skills directory: {cli_dir}")
+            assert_real_directory_chain(base, managed_skills)
+            if (
+                not managed_skills.exists()
+                or managed_skills.is_symlink()
+                or not managed_skills.is_dir()
+            ):
+                raise ValueError(
+                    f"Canonical Claude skills alias target is not a real directory: {managed_skills}"
+                )
+            resolved_cli = cli_dir.resolve(strict=True)
+            if resolved_cli != managed_skills.resolve(strict=True):
+                raise ValueError(
+                    f"Canonical Claude skills alias escapes managed project skills: {cli_dir}"
+                )
+            # The alias already exposes the managed projection.  Do not fan out
+            # into `.agents/skills` a second time: that directory is owned by
+            # the pinned provisioner and may also contain real custom skills.
+            continue
+        else:
+            if cli_dir.exists() and not cli_dir.is_dir():
+                raise ValueError(f"CLI skills destination is not a directory: {cli_dir}")
+            real_parent = parent.resolve(strict=True)
+            expected_cli = real_parent / cli_dir.name
+            if cli_dir.exists() and cli_dir.resolve(strict=True) != expected_cli:
+                raise ValueError(f"CLI skills directory escapes its parent: {cli_dir}")
         for name in skill_names:
             destination = expected_cli / name
             if destination.parent != expected_cli or len(destination.relative_to(expected_cli).parts) != 1:
                 raise ValueError(f"Skill destination escapes CLI directory: {destination}")
-        active.append(cli_dir)
+        active.append((cli_dir, expected_cli))
     return active
 
 
@@ -233,19 +264,24 @@ def resolve_skill_path(
     return name, None
 
 
-def fanout_to_cli(cli_dirs_base, skills_map):
+def fanout_to_cli(cli_dirs_base, skills_map, active_cli_dirs=None):
     """
     Creates symlinks in each of the CLI_SKILL_DIRS relative to cli_dirs_base
     pointing to the resolved paths in skills_map.
     """
     skill_names = [validate_skill_name(name) for name in skills_map]
-    active_cli_dirs = preflight_cli_dirs(cli_dirs_base, skill_names)
+    if active_cli_dirs is None:
+        active_cli_dirs = preflight_cli_dirs(cli_dirs_base, skill_names)
     linked_total = 0
-    for cli_dir in active_cli_dirs:
-        cli_dir.mkdir(parents=True, exist_ok=True)
-        if cli_dir.is_symlink() or not cli_dir.is_dir():
+    for cli_dir, expected_cli in active_cli_dirs:
+        if not cli_dir.is_symlink():
+            cli_dir.mkdir(parents=True, exist_ok=True)
+        if cli_dir.is_symlink():
+            if cli_dir.resolve(strict=True) != expected_cli:
+                raise ValueError(f"CLI skills alias changed after preflight: {cli_dir}")
+        elif not cli_dir.is_dir():
             raise ValueError(f"Unsafe CLI skills directory after creation: {cli_dir}")
-        real_cli_dir = cli_dir.resolve(strict=True)
+        real_cli_dir = expected_cli.resolve(strict=True)
 
         for name, actual_path in skills_map.items():
             symlink_target = real_cli_dir / name
@@ -278,10 +314,39 @@ def fanout_to_cli(cli_dirs_base, skills_map):
 
 def main():
     args = parse_args()
-    cache_dir = ensure_cache_dir()
 
     global_manifest_path = Path(os.path.expanduser("~/.agents/skills.json"))
     project_manifest_path = Path(os.getcwd()) / ".agents" / "skills.json"
+
+    # Destination topology is a security boundary.  Validate every active CLI
+    # directory before cloning/updating registries, creating caches, or changing
+    # any skill link so one unsafe/broken symlink produces zero mutation.
+    preflight_names = []
+    preflight_base = Path(os.path.expanduser("~"))
+    if args.scope == "global":
+        preflight_manifest = load_manifest(global_manifest_path)
+        validate_manifest_skill_names(preflight_manifest)
+        preflight_names.extend(
+            manifest_skill_name(skill)
+            for skill in preflight_manifest.get("skills", [])
+        )
+    else:
+        preflight_base = Path(os.getcwd())
+        preflight_manifest = load_manifest(project_manifest_path)
+        validate_manifest_skill_names(preflight_manifest)
+        preflight_names.extend(
+            manifest_skill_name(skill)
+            for skill in preflight_manifest.get("skills", [])
+        )
+        if preflight_manifest.get("inherit_global", False):
+            inherited = load_manifest(global_manifest_path)
+            validate_manifest_skill_names(inherited)
+            preflight_names.extend(
+                manifest_skill_name(skill)
+                for skill in inherited.get("skills", [])
+            )
+    active_cli_dirs = preflight_cli_dirs(preflight_base, preflight_names)
+    cache_dir = ensure_cache_dir()
 
     skills_to_sync = {}  # name -> actual_path
     registry_cache = {}
@@ -306,7 +371,11 @@ def main():
                 skills_to_sync[name] = path
 
         # Fanout globally (home dir)
-        fanout_to_cli(Path(os.path.expanduser("~")), skills_to_sync)
+        fanout_to_cli(
+            Path(os.path.expanduser("~")),
+            skills_to_sync,
+            active_cli_dirs=active_cli_dirs,
+        )
 
     elif args.scope == "project":
         print(f"Loading project manifest from {project_manifest_path}")
@@ -349,7 +418,11 @@ def main():
                 skills_to_sync[name] = path
 
         # Fanout locally (project dir)
-        fanout_to_cli(Path(os.getcwd()), skills_to_sync)
+        fanout_to_cli(
+            Path(os.getcwd()),
+            skills_to_sync,
+            active_cli_dirs=active_cli_dirs,
+        )
 
 
 if __name__ == "__main__":
