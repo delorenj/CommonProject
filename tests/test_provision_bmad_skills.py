@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import stat
@@ -102,6 +103,37 @@ class ProvisionTransactionTests(unittest.TestCase):
         with working_directory(self.project):
             with self.assertRaisesRegex(ValueError, "digest mismatch"):
                 PROVISIONER.provision(after_preflight=mutate_pack)
+
+        self.assertEqual(snapshot(self.project), before)
+
+    def test_malformed_manifest_fails_before_creating_skills_or_temp_paths(self) -> None:
+        project = self.root / "malformed-project"
+        agents = project / ".agents"
+        agents.mkdir(parents=True)
+        manifest = agents / "skills.json"
+        manifest.write_bytes(b"{malformed\n")
+        manifest.chmod(0o600)
+        before = snapshot(project)
+
+        with working_directory(project):
+            with self.assertRaises(json.JSONDecodeError):
+                PROVISIONER.provision()
+
+        self.assertEqual(snapshot(project), before)
+        self.assertFalse((agents / "skills").exists())
+        self.assertFalse(any(path.name.startswith(".bmad-transaction-") for path in agents.iterdir()))
+
+    def test_applied_projection_mismatch_rolls_back_exactly(self) -> None:
+        before = snapshot(self.project)
+
+        def corrupt_projection(_manifest: Path, skills: Path) -> None:
+            link = skills / "bmad-agent-pm"
+            link.unlink()
+            link.symlink_to("/tmp/wrong-after-apply", target_is_directory=True)
+
+        with working_directory(self.project):
+            with self.assertRaisesRegex(ValueError, "link differs from plan"):
+                PROVISIONER.provision(after_apply=corrupt_projection)
 
         self.assertEqual(snapshot(self.project), before)
 

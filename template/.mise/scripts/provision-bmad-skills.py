@@ -250,6 +250,7 @@ def provision(
     *,
     after_preflight: Callable[[], None] | None = None,
     create_link: Callable[[Path, Path, int], None] | None = None,
+    after_apply: Callable[[Path, Path], None] | None = None,
 ) -> int:
     root = pack_root()
     pack_skills = validate_trusted_pack(root)
@@ -261,8 +262,9 @@ def provision(
     skills_path = agents_path / "skills"
     agents_existed = agents_path.exists() or agents_path.is_symlink()
     skills_existed = skills_path.exists() or skills_path.is_symlink()
-    agents_dir, skills_dir = prepare_project_skill_dirs(project_root)
-    manifest_path = agents_dir / "skills.json"
+    preflight_project_directory(project_root, agents_path)
+    preflight_project_directory(project_root, skills_path)
+    manifest_path = agents_path / "skills.json"
     if manifest_path.is_symlink():
         raise ValueError(f"Refusing symlinked skills manifest: {manifest_path}")
     if manifest_path.exists() and not manifest_path.is_file():
@@ -270,10 +272,13 @@ def provision(
     manifest_existed = manifest_path.exists()
     manifest_bytes = read_regular_file(manifest_path) if manifest_existed else None
     manifest_mode = stat.S_IMODE(manifest_path.lstat().st_mode) if manifest_existed else 0o644
-    manifest = load_manifest(manifest_path)
+    manifest = json.loads(manifest_bytes) if manifest_bytes is not None else {}
+    if not isinstance(manifest, dict):
+        raise ValueError(f"{manifest_path} must contain a JSON object")
     existing = manifest.get("skills", [])
     if not isinstance(existing, list):
         raise ValueError(f"{manifest_path} skills must be an array")
+    agents_dir, skills_dir = prepare_project_skill_dirs(project_root)
 
     manifest["$schema"] = SKILLS_SCHEMA
     manifest["inherit_global"] = True
@@ -362,6 +367,32 @@ def provision(
         postflight = validate_trusted_pack(root)
         if [path.name for path in postflight] != list(expected):
             raise ValueError("BMAD pack inventory changed after preflight")
+        if after_apply is not None:
+            after_apply(manifest_path, skills_dir)
+        actual_bmad = sorted(
+            entry.name for entry in skills_dir.iterdir() if entry.name.startswith("bmad-")
+        )
+        if actual_bmad != sorted(expected):
+            raise ValueError("Applied BMAD projection contains missing or unexpected entries")
+        for name, target in expected.items():
+            if lexical_link_target(skills_dir / name) != target:
+                raise ValueError(f"Applied BMAD projection link differs from plan: {name}")
+        final_mode = manifest_path.lstat().st_mode
+        if (
+            not stat.S_ISREG(final_mode)
+            or read_regular_file(manifest_path) != next_manifest
+            or stat.S_IMODE(final_mode) != manifest_mode
+        ):
+            raise ValueError("Applied BMAD skills manifest differs from planned bytes or mode")
+        final_manifest = json.loads(read_regular_file(manifest_path))
+        if (
+            not isinstance(final_manifest, dict)
+            or final_manifest.get("$schema") != SKILLS_SCHEMA
+            or final_manifest.get("inherit_global") is not True
+            or final_manifest.get("registry") != SKILLS_REGISTRY
+            or not isinstance(final_manifest.get("skills"), list)
+        ):
+            raise ValueError("Applied BMAD skills manifest schema differs from plan")
     except Exception as error:
         try:
             rollback()
