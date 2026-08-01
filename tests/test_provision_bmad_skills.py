@@ -66,6 +66,9 @@ class ProvisionTransactionTests(unittest.TestCase):
         copied = skills / "bmad-agent-pm"
         copied.mkdir()
         (copied / "legacy.txt").write_text("preserve exactly\n")
+        (skills / "bmad-agent-analyst").symlink_to(
+            self.pack / "bmad-agent-analyst", target_is_directory=True
+        )
         (skills / "bmad-stale").symlink_to("/tmp/stale-target", target_is_directory=True)
         custom = skills / "custom"
         custom.mkdir()
@@ -127,7 +130,7 @@ class ProvisionTransactionTests(unittest.TestCase):
         before = snapshot(self.project)
 
         def corrupt_projection(_manifest: Path, skills: Path) -> None:
-            link = skills / "bmad-agent-pm"
+            link = skills / "bmad-agent-analyst"
             link.unlink()
             link.symlink_to("/tmp/wrong-after-apply", target_is_directory=True)
 

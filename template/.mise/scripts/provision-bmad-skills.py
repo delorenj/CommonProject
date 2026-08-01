@@ -290,13 +290,18 @@ def provision(
     next_manifest = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
     expected = {path.name: path for path in pack_skills}
     affected: list[str] = []
+    original_bmad_names: set[str] = set()
+    original_correct_links: dict[str, str] = {}
     for entry in skills_dir.iterdir():
         if entry.parent.resolve(strict=True) != skills_dir.resolve(strict=True):
             raise ValueError(f"BMAD skill entry escapes skills directory: {entry}")
         if entry.name.startswith("bmad-"):
             validate_skill_name(entry.name)
+            original_bmad_names.add(entry.name)
             target = expected.get(entry.name)
-            if target is None or lexical_link_target(entry) != target:
+            if target is not None and lexical_link_target(entry) == target:
+                original_correct_links[entry.name] = os.readlink(entry)
+            else:
                 affected.append(entry.name)
     for name, target in expected.items():
         link = skills_dir / validate_skill_name(name)
@@ -318,15 +323,28 @@ def provision(
 
     def rollback() -> None:
         errors: list[str] = []
-        for name in reversed(created):
-            try:
-                remove_entry(skills_dir / name)
-            except OSError as error:
-                errors.append(f"remove {name}: {error}")
+        moved_names = set(moved)
+        try:
+            for entry in skills_dir.iterdir():
+                if not entry.name.startswith("bmad-"):
+                    continue
+                validate_skill_name(entry.name)
+                if (
+                    entry.name not in original_bmad_names
+                    or entry.name in moved_names
+                    or entry.name in original_correct_links
+                ):
+                    remove_entry(entry)
+        except OSError as error:
+            errors.append(f"remove applied projection: {error}")
         for name in reversed(moved):
             try:
-                remove_entry(skills_dir / name)
                 os.replace(backup / name, skills_dir / name)
+            except OSError as error:
+                errors.append(f"restore {name}: {error}")
+        for name, raw_target in original_correct_links.items():
+            try:
+                (skills_dir / name).symlink_to(raw_target, target_is_directory=True)
             except OSError as error:
                 errors.append(f"restore {name}: {error}")
         try:
