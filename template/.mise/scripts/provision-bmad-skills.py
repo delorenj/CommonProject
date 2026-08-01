@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
+import stat
+import tomllib
 from pathlib import Path
 
 
-BMAD_PACK_VERSION = "6.10.2"
+BMAD_PACK_VERSION = "6.10.1-next.31"
+BMAD_PACK_CHECKSUMS_SHA256 = "a8bc005612ac60e3ec775fff5a11eafe38be6acdae96efa3d770b48322cb3224"
+BMAD_PACK_SKILL_COUNT = 76
+BMAD_PACK_PAYLOAD_FILES = 1072
 SKILLS_SCHEMA = "https://raw.githubusercontent.com/skillex/schemas/main/skills.schema.json"
 SKILLS_REGISTRY = "https://github.com/delorenj/skillex.git"
 
@@ -20,7 +26,129 @@ def pack_root() -> Path:
         Path(override).expanduser()
         if override
         else Path.home() / "code" / "skillex" / "packs" / "bmad" / BMAD_PACK_VERSION
-    ).resolve()
+    ).absolute()
+
+
+def read_regular_file(path: Path) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"BMAD pack entry is not a regular file: {path}")
+        with os.fdopen(os.dup(descriptor), "rb") as handle:
+            return handle.read()
+    finally:
+        os.close(descriptor)
+
+
+def safe_checksum_path(value: str) -> Path:
+    path = Path(value)
+    if not value or "\\" in value or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError(f"Unsafe BMAD checksum path: {value!r}")
+    return path
+
+
+def walk_regular_tree(root: Path) -> tuple[dict[str, bytes], set[str]]:
+    files: dict[str, bytes] = {}
+    directories: set[str] = set()
+
+    def visit(directory: Path) -> None:
+        for entry in sorted(os.scandir(directory), key=lambda item: item.name):
+            path = Path(entry.path)
+            mode = entry.stat(follow_symlinks=False).st_mode
+            if stat.S_ISLNK(mode):
+                raise ValueError(f"BMAD pack may not contain symlinks: {path}")
+            if stat.S_ISDIR(mode):
+                directories.add(path.relative_to(root).as_posix())
+                visit(path)
+            elif stat.S_ISREG(mode):
+                files[path.relative_to(root).as_posix()] = read_regular_file(path)
+            else:
+                raise ValueError(f"BMAD pack may contain only regular files/directories: {path}")
+
+    visit(root)
+    return files, directories
+
+
+def validate_trusted_pack(root: Path) -> list[Path]:
+    mode = root.lstat().st_mode
+    if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+        raise ValueError(f"BMAD pack root must be a real directory: {root}")
+
+    checksum_bytes = read_regular_file(root / "SHA256SUMS")
+    if hashlib.sha256(checksum_bytes).hexdigest() != BMAD_PACK_CHECKSUMS_SHA256:
+        raise ValueError(
+            f"BMAD pack checksum manifest is not the trusted {BMAD_PACK_VERSION} manifest"
+        )
+    expected: dict[str, str] = {}
+    for line in checksum_bytes.decode("utf-8").splitlines():
+        digest, separator, value = line.partition("  ")
+        if separator != "  " or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError(f"Invalid BMAD SHA256SUMS entry: {line}")
+        relative = safe_checksum_path(value).as_posix()
+        if relative in expected:
+            raise ValueError(f"Duplicate BMAD SHA256SUMS entry: {relative}")
+        expected[relative] = digest
+
+    actual, directories = walk_regular_tree(root)
+    actual.pop("SHA256SUMS", None)
+    missing = sorted(set(expected) - set(actual))
+    extra = sorted(set(actual) - set(expected))
+    if missing or extra:
+        raise ValueError(f"BMAD checksum coverage mismatch; missing={missing} extra={extra}")
+    for relative, digest in expected.items():
+        if hashlib.sha256(actual[relative]).hexdigest() != digest:
+            raise ValueError(f"BMAD pack digest mismatch: {relative}")
+    for directory in directories:
+        if not any(relative.startswith(f"{directory}/") for relative in actual):
+            raise ValueError(
+                f"BMAD pack contains an unauthenticated empty directory: {directory}"
+            )
+
+    metadata = tomllib.loads(actual["pack.toml"].decode("utf-8"))
+    pack = metadata.get("pack", {})
+    source = metadata.get("source", {})
+    freeform = metadata.get("freeform", {})
+    policy = metadata.get("policy", {})
+    if (
+        pack.get("name") != "bmad"
+        or pack.get("version") != BMAD_PACK_VERSION
+        or source.get("upstream") != "bmad-method"
+        or source.get("upstream_version") != BMAD_PACK_VERSION
+        or source.get("rendered_from") != ".agent/skills"
+        or policy.get("immutable") is not True
+        or policy.get("project_projection") != "symlink"
+    ):
+        raise ValueError(f"BMAD pack.toml does not declare the trusted {BMAD_PACK_VERSION} contract")
+    skill_names = freeform.get("skills")
+    payload_files = source.get("payload_files")
+    if (
+        not isinstance(skill_names, list)
+        or not all(isinstance(name, str) for name in skill_names)
+        or len(skill_names) != BMAD_PACK_SKILL_COUNT
+        or len(set(skill_names)) != len(skill_names)
+    ):
+        raise ValueError(f"BMAD pack.toml must declare exactly {BMAD_PACK_SKILL_COUNT} unique skills")
+    if payload_files != BMAD_PACK_PAYLOAD_FILES:
+        raise ValueError(f"BMAD pack.toml must declare exactly {BMAD_PACK_PAYLOAD_FILES} payload files")
+    for name in skill_names:
+        if not name.startswith("bmad-"):
+            raise ValueError(f"Unsafe BMAD skill identity: {name!r}")
+        validate_skill_name(name)
+
+    top_level_directories = sorted(
+        entry.name for entry in os.scandir(root) if stat.S_ISDIR(entry.stat(follow_symlinks=False).st_mode)
+    )
+    if top_level_directories != sorted(skill_names):
+        raise ValueError("BMAD pack directory inventory differs from authenticated pack.toml skills")
+    for name in skill_names:
+        skill_md = root / name / "SKILL.md"
+        if not stat.S_ISREG(skill_md.lstat().st_mode):
+            raise ValueError(f"BMAD skill is missing a regular SKILL.md: {name}")
+    skill_set = set(skill_names)
+    payload_count = sum(1 for relative in actual if relative.split("/", 1)[0] in skill_set)
+    if payload_count != payload_files:
+        raise ValueError(f"BMAD payload inventory mismatch: {payload_count} != {payload_files}")
+    return [root / name for name in skill_names]
 
 
 def load_manifest(path: Path) -> dict:
@@ -96,22 +224,13 @@ def replace_with_symlink(link: Path, target: Path) -> bool:
 
 def main() -> None:
     root = pack_root()
-    if not root.is_dir():
+    try:
+        pack_skills = validate_trusted_pack(root)
+    except (FileNotFoundError, OSError, ValueError) as error:
         raise SystemExit(
-            f"BMAD Skillex pack {BMAD_PACK_VERSION} not found at {root}; "
-            "set PJ_BMAD_PACK_ROOT to the installed pack"
-        )
-
-    pack_skills = sorted(
-        path.resolve()
-        for path in root.iterdir()
-        if path.is_dir() and path.name.startswith("bmad-")
-    )
-    if not pack_skills:
-        raise SystemExit(f"BMAD Skillex pack contains no bmad-* skills: {root}")
-
-    for path in pack_skills:
-        validate_skill_name(path.name)
+            f"BMAD Skillex pack {BMAD_PACK_VERSION} is not trusted at {root}: {error}; "
+            "set PJ_BMAD_PACK_ROOT to the installed canonical pack"
+        ) from error
 
     project_root = Path.cwd().resolve(strict=True)
     agents_dir, skills_dir = prepare_project_skill_dirs(project_root)
