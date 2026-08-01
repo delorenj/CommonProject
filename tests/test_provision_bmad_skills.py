@@ -61,7 +61,21 @@ class ProvisionTransactionTests(unittest.TestCase):
         skills = self.project / ".agents" / "skills"
         skills.mkdir(parents=True)
         manifest = self.project / ".agents" / "skills.json"
-        manifest.write_text('{"skills":[{"name":"custom","source":"file:///custom"}]}\n')
+        private = skills / "bmad-private-custom"
+        private.mkdir()
+        (private / "SKILL.md").write_text("private custom must survive\n")
+        manifest.write_text(
+            json.dumps(
+                {
+                    "skills": [
+                        {"name": "custom", "source": "file:///custom"},
+                        {"name": "bmad-private-custom", "source": private.as_uri()},
+                        {"name": "bmad-stale", "source": (self.pack / "bmad-stale").as_uri()},
+                    ]
+                }
+            )
+            + "\n"
+        )
         manifest.chmod(0o600)
         copied = skills / "bmad-agent-pm"
         copied.mkdir()
@@ -69,7 +83,9 @@ class ProvisionTransactionTests(unittest.TestCase):
         (skills / "bmad-agent-analyst").symlink_to(
             self.pack / "bmad-agent-analyst", target_is_directory=True
         )
-        (skills / "bmad-stale").symlink_to("/tmp/stale-target", target_is_directory=True)
+        (skills / "bmad-stale").symlink_to(
+            self.pack / "bmad-stale", target_is_directory=True
+        )
         custom = skills / "custom"
         custom.mkdir()
         (custom / "SKILL.md").write_text("custom\n")
@@ -148,13 +164,39 @@ class ProvisionTransactionTests(unittest.TestCase):
 
         self.assertEqual(snapshot(self.project), after_first)
         skills = self.project / ".agents" / "skills"
-        self.assertEqual(len([path for path in skills.iterdir() if path.name.startswith("bmad-")]), 76)
+        self.assertTrue((skills / "bmad-private-custom").is_dir())
+        self.assertEqual(
+            (skills / "bmad-private-custom" / "SKILL.md").read_text(),
+            "private custom must survive\n",
+        )
+        self.assertFalse((skills / "bmad-stale").exists())
+        manifest = json.loads((self.project / ".agents" / "skills.json").read_text())
+        self.assertIn(
+            {
+                "name": "bmad-private-custom",
+                "source": (skills / "bmad-private-custom").as_uri(),
+            },
+            manifest["skills"],
+        )
+        self.assertNotIn("bmad-stale", [entry.get("name") for entry in manifest["skills"]])
         self.assertTrue(
             all(
                 (skills / path.name).is_symlink()
                 for path in PROVISIONER.validate_trusted_pack(self.pack)
             )
         )
+
+    def test_unowned_bmad_prefixed_custom_skill_is_preserved(self) -> None:
+        custom = self.project / ".agents" / "skills" / "bmad-private-custom"
+        before = snapshot(custom)
+
+        with working_directory(self.project):
+            self.assertGreater(PROVISIONER.provision(), 0)
+            after_first = snapshot(self.project)
+            self.assertEqual(PROVISIONER.provision(), 0)
+
+        self.assertEqual(snapshot(custom), before)
+        self.assertEqual(snapshot(self.project), after_first)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 from typing import Callable
+from urllib.parse import unquote, urlparse
 
 
 BMAD_PACK_VERSION = "6.10.1-next.31"
@@ -162,13 +163,37 @@ def load_manifest(path: Path) -> dict:
     return value
 
 
-def is_bmad_entry(value: object) -> bool:
+def manifest_entry_name(value: object) -> str | None:
     if isinstance(value, str):
-        return value.startswith("bmad-")
+        return value
     if isinstance(value, dict):
         name = value.get("name")
-        return isinstance(name, str) and name.startswith("bmad-")
-    return False
+        return name if isinstance(name, str) else None
+    return None
+
+
+def is_pack_managed_manifest_entry(
+    value: object, expected_names: set[str], root: Path
+) -> bool:
+    name = manifest_entry_name(value)
+    if name is None:
+        return False
+    if name in expected_names:
+        return True
+    if not isinstance(value, dict):
+        return False
+    source = value.get("source")
+    if not isinstance(source, str):
+        return False
+    try:
+        parsed = urlparse(source)
+        if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+            return False
+        source_path = Path(os.path.abspath(unquote(parsed.path)))
+        source_path.relative_to(root)
+    except (OSError, ValueError):
+        return False
+    return source_path.name == name
 
 
 def validate_skill_name(name: str) -> str:
@@ -283,26 +308,48 @@ def provision(
     manifest["$schema"] = SKILLS_SCHEMA
     manifest["inherit_global"] = True
     manifest["registry"] = SKILLS_REGISTRY
+    expected = {path.name: path for path in pack_skills}
+    expected_names = set(expected)
+    managed_manifest_names = {
+        name
+        for entry in existing
+        if is_pack_managed_manifest_entry(entry, expected_names, root)
+        if (name := manifest_entry_name(entry)) is not None
+    }
     manifest["skills"] = [
-        *[entry for entry in existing if not is_bmad_entry(entry)],
+        *[
+            entry
+            for entry in existing
+            if not is_pack_managed_manifest_entry(entry, expected_names, root)
+        ],
         *[{"name": path.name, "source": path.as_uri()} for path in pack_skills],
     ]
     next_manifest = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
-    expected = {path.name: path for path in pack_skills}
     affected: list[str] = []
-    original_bmad_names: set[str] = set()
+    stale_managed_names: set[str] = set()
     original_correct_links: dict[str, str] = {}
     for entry in skills_dir.iterdir():
         if entry.parent.resolve(strict=True) != skills_dir.resolve(strict=True):
             raise ValueError(f"BMAD skill entry escapes skills directory: {entry}")
-        if entry.name.startswith("bmad-"):
-            validate_skill_name(entry.name)
-            original_bmad_names.add(entry.name)
-            target = expected.get(entry.name)
-            if target is not None and lexical_link_target(entry) == target:
-                original_correct_links[entry.name] = os.readlink(entry)
-            else:
-                affected.append(entry.name)
+        validate_skill_name(entry.name)
+        link_target = lexical_link_target(entry)
+        try:
+            link_targets_pack = link_target is not None and link_target.is_relative_to(root)
+        except OSError:
+            link_targets_pack = False
+        if (
+            entry.name not in expected
+            and entry.name not in managed_manifest_names
+            and not link_targets_pack
+        ):
+            continue
+        target = expected.get(entry.name)
+        if target is not None and link_target == target:
+            original_correct_links[entry.name] = os.readlink(entry)
+        else:
+            affected.append(entry.name)
+            if target is None:
+                stale_managed_names.add(entry.name)
     for name, target in expected.items():
         link = skills_dir / validate_skill_name(name)
         if link.parent.resolve(strict=True) != skills_dir.resolve(strict=True):
@@ -323,18 +370,11 @@ def provision(
 
     def rollback() -> None:
         errors: list[str] = []
-        moved_names = set(moved)
         try:
-            for entry in skills_dir.iterdir():
-                if not entry.name.startswith("bmad-"):
-                    continue
-                validate_skill_name(entry.name)
-                if (
-                    entry.name not in original_bmad_names
-                    or entry.name in moved_names
-                    or entry.name in original_correct_links
-                ):
-                    remove_entry(entry)
+            for name in affected:
+                remove_entry(skills_dir / validate_skill_name(name))
+            for name in original_correct_links:
+                remove_entry(skills_dir / validate_skill_name(name))
         except OSError as error:
             errors.append(f"remove applied projection: {error}")
         for name in reversed(moved):
@@ -387,11 +427,10 @@ def provision(
             raise ValueError("BMAD pack inventory changed after preflight")
         if after_apply is not None:
             after_apply(manifest_path, skills_dir)
-        actual_bmad = sorted(
-            entry.name for entry in skills_dir.iterdir() if entry.name.startswith("bmad-")
-        )
-        if actual_bmad != sorted(expected):
-            raise ValueError("Applied BMAD projection contains missing or unexpected entries")
+        for name in stale_managed_names:
+            entry = skills_dir / name
+            if entry.exists() or entry.is_symlink():
+                raise ValueError(f"Applied BMAD projection retained stale managed entry: {name}")
         for name, target in expected.items():
             if lexical_link_target(skills_dir / name) != target:
                 raise ValueError(f"Applied BMAD projection link differs from plan: {name}")
