@@ -18,7 +18,9 @@ _.file = [".env"]
 [[hooks.enter]]
 script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh'"
 [[hooks.enter]]
-script = "op inject -i .env.op > .env"
+# Guarded: a bare `op inject -i .env.op > .env` truncates a populated .env before
+# `op` ever runs when .env.op is absent or the op CLI is not installed (PJAN-24).
+script = "[ -f '{% raw %}{{config_root}}{% endraw %}/.env.op' ] && command -v op >/dev/null 2>&1 && op inject -i '{% raw %}{{config_root}}{% endraw %}/.env.op' > '{% raw %}{{config_root}}{% endraw %}/.env' || true"
 [[hooks.enter]]
 script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-bmad-skills.py'"
 [[hooks.enter]]
