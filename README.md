@@ -8,6 +8,7 @@ Copier template for creating new 33GOD ecosystem components with BMAD methodolog
 - **Event-Driven Architecture**: Optional [Bloodbank](https://github.com/delorenj/Bloodbank) integration
 - **Plane Integration**: `.project.json` for ticket management and project config
 - **Ticket Enforcement**: Git hooks enforce Plane ticket requirements
+- **Code Review**: `.github/workflows/code-review.yml` reviews every pull request (see [Code Review](#code-review))
 - [TODO] **BMAD Integration**: Full BMAD methodology structure by auto running `npx bmad-method@latest install`
 - [TODO] Multiple-choice selection for different workflows: BMAD, GSD, GoogleAgentSkills, None.
 - **Containerization**: Optional Docker + Docker Compose
@@ -127,6 +128,40 @@ The template asks for:
    # Without Docker (Python example)
    mise run dev
    ```
+
+## Code Review
+
+Every generated project ships `.github/workflows/code-review.yml`. It is
+unconditional — there is no template question to answer and no flag to forget —
+so a new project has pull-request review from its first PR.
+
+The workflow runs [`anthropics/claude-code-action@v1`](https://github.com/anthropics/claude-code-action)
+on `pull_request` (`opened`, `synchronize`, `ready_for_review`, `reopened`). It
+deliberately does **not** use `pull_request_target`, which would expose repo
+secrets to code from forked PRs.
+
+### Required secret: `CLAUDE_CODE_OAUTH_TOKEN`
+
+**The workflow does nothing until this secret exists.** Without it the job still
+triggers, but the action has no credential and the run fails.
+
+`CLAUDE_CODE_OAUTH_TOKEN` is a long-lived Claude Code OAuth/session token — not a
+metered Anthropic API key. Provide it either way:
+
+- **Org-level secret** (preferred): set it once on the GitHub org and grant the
+  new repo access. Generated repos inherit it with zero per-repo setup.
+- **Repo-level secret**: `Settings → Secrets and variables → Actions → New
+  repository secret`, name `CLAUDE_CODE_OAUTH_TOKEN`. Or from the CLI:
+
+  ```bash
+  gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
+  ```
+
+Generate the token with `claude setup-token` (Claude Code CLI).
+
+The job requests exactly `contents: read`, `pull-requests: read`,
+`issues: read`, and `id-token: write` — read-only on the repo, with OIDC for the
+action's own auth exchange.
 
 ## Updating Existing Projects
 
