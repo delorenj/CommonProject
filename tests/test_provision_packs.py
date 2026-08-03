@@ -12,11 +12,18 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "template" / ".mise" / "scripts" / "provision-bmad-skills.py"
-SPEC = importlib.util.spec_from_file_location("provision_bmad_skills", SCRIPT)
+SCRIPT = ROOT / "template" / ".mise" / "scripts" / "provision-packs.py"
+SPEC = importlib.util.spec_from_file_location("provision_packs", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 PROVISIONER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PROVISIONER)
+
+
+def declared_pack_skills(pack: Path):
+    """The declared inventory of a pack, via the shared sync engine."""
+    metadata = PROVISIONER.engine.read_pack_metadata(pack)
+    names = PROVISIONER.engine.pack_declared_skills(pack, metadata, {"name": "bmad"})
+    return [pack / name for name in names]
 
 
 @contextmanager
@@ -53,7 +60,7 @@ class ProvisionTransactionTests(unittest.TestCase):
         source = os.environ.get("PJ_BMAD_PACK_ROOT")
         if not source:
             self.skipTest("PJ_BMAD_PACK_ROOT must identify the canonical candidate pack")
-        self.temporary = tempfile.TemporaryDirectory(prefix="commonproject-bmad-transaction-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="commonproject-packs-transaction-")
         self.root = Path(self.temporary.name)
         self.pack = self.root / "pack"
         shutil.copytree(source, self.pack, symlinks=True)
@@ -140,7 +147,7 @@ class ProvisionTransactionTests(unittest.TestCase):
 
         self.assertEqual(snapshot(project), before)
         self.assertFalse((agents / "skills").exists())
-        self.assertFalse(any(path.name.startswith(".bmad-transaction-") for path in agents.iterdir()))
+        self.assertFalse(any(path.name.startswith(".packs-transaction-") for path in agents.iterdir()))
 
     def test_applied_projection_mismatch_rolls_back_exactly(self) -> None:
         before = snapshot(self.project)
@@ -182,7 +189,7 @@ class ProvisionTransactionTests(unittest.TestCase):
         self.assertTrue(
             all(
                 (skills / path.name).is_symlink()
-                for path in PROVISIONER.validate_trusted_pack(self.pack)
+                for path in declared_pack_skills(self.pack)
             )
         )
 
@@ -197,6 +204,131 @@ class ProvisionTransactionTests(unittest.TestCase):
 
         self.assertEqual(snapshot(custom), before)
         self.assertEqual(snapshot(self.project), after_first)
+
+
+def write_skill(directory: Path) -> None:
+    directory.mkdir(parents=True)
+    (directory / "SKILL.md").write_text(f"# {directory.name}\n")
+
+
+class DeclaredPackRedundancyTests(unittest.TestCase):
+    """PACKS-CONTRACT section 6: "Never remove entries that point outside the pack."
+
+    A pack family is `packs/<name>/<version>/`. Declaring `<name>` resolves ONE
+    version, and only that version is the pack. A `skills[]` entry pointing at a
+    SIBLING version is only redundant when the resolved pack also declares that
+    skill; otherwise the entry is the sole reference to a skill nothing else
+    provides and deleting it loses the skill. This mirrors pjangler's
+    `isRedundantDeclaredPackEntry` so `pj migrate` and this script can never
+    disagree about the same manifest.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="commonproject-packs-redundancy-")
+        self.root = Path(self.temporary.name)
+
+        # A registry with a two-version `demo` family: 2.0.0 (the version that
+        # resolves) dropped `beta`, which only 1.0.0 ever declared.
+        self.registry = self.root / "registry"
+        self.old = self.registry / "packs" / "demo" / "1.0.0"
+        self.new = self.registry / "packs" / "demo" / "2.0.0"
+        write_skill(self.old / "alpha")
+        write_skill(self.old / "beta")
+        write_skill(self.new / "alpha")
+
+        # The implicit BMAD pin is sealed and always resolves; stub it out with
+        # an empty sealed pack so this test never depends on ~/code/skillex.
+        self.bmad = self.root / "bmad-stub"
+        self.bmad.mkdir()
+        (self.bmad / "SHA256SUMS").write_text("")
+
+        self.outside = self.root / "outside" / "gamma"
+        write_skill(self.outside)
+
+        self.project = self.root / "project"
+        (self.project / ".agents").mkdir(parents=True)
+        self.manifest_path = self.project / ".agents" / "skills.json"
+        self.manifest_path.write_text(
+            json.dumps(
+                {
+                    "packs": ["demo"],
+                    "skills": [
+                        # Provided by the resolved pack, via a sibling version.
+                        {"name": "alpha", "source": (self.old / "alpha").as_uri()},
+                        # NOT provided by the resolved pack: must survive.
+                        {"name": "beta", "source": (self.old / "beta").as_uri()},
+                        # Straight into the resolved pack root: redundant.
+                        {"name": "alpha-dup", "source": (self.new / "alpha").as_uri()},
+                        # Nothing to do with the pack at all.
+                        {"name": "gamma", "source": self.outside.as_uri()},
+                    ],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+
+        self.previous = {
+            name: os.environ.get(name)
+            for name in ("PJ_SKILLS_REGISTRY_ROOT", "PJ_BMAD_PACK_ROOT", "PJ_PACK_ROOT_DEMO")
+        }
+        os.environ["PJ_SKILLS_REGISTRY_ROOT"] = str(self.registry)
+        os.environ["PJ_BMAD_PACK_ROOT"] = str(self.bmad)
+        os.environ.pop("PJ_PACK_ROOT_DEMO", None)
+
+    def tearDown(self) -> None:
+        for name, value in self.previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        self.temporary.cleanup()
+
+    def manifest_skills(self):
+        return json.loads(self.manifest_path.read_text())["skills"]
+
+    def test_sibling_version_entry_the_resolved_pack_does_not_declare_is_kept(self) -> None:
+        with working_directory(self.project):
+            PROVISIONER.provision()
+
+        names = [entry["name"] for entry in self.manifest_skills()]
+        self.assertIn("beta", names, "a skill no declared pack provides must never be dropped")
+        self.assertIn("gamma", names)
+        # Parity with pjangler is two-sided: entries the resolved pack DOES
+        # provide are still pruned, whichever version they point at.
+        self.assertNotIn("alpha", names)
+        self.assertNotIn("alpha-dup", names)
+
+        beta = next(entry for entry in self.manifest_skills() if entry["name"] == "beta")
+        self.assertEqual(beta["source"], (self.old / "beta").as_uri())
+
+        # The projection is the resolved pack only; `beta` stays sync-skills' job.
+        skills = self.project / ".agents" / "skills"
+        self.assertEqual(os.readlink(skills / "alpha"), str(self.new / "alpha"))
+        self.assertFalse((skills / "beta").exists() or (skills / "beta").is_symlink())
+
+    def test_redundancy_pruning_is_idempotent(self) -> None:
+        with working_directory(self.project):
+            PROVISIONER.provision()
+            after_first = snapshot(self.project)
+            self.assertEqual(PROVISIONER.provision(), 0)
+
+        self.assertEqual(snapshot(self.project), after_first)
+
+    def test_sibling_version_entry_is_dropped_once_the_pack_declares_it(self) -> None:
+        """The gate is the resolved pack's inventory, not the path shape."""
+        write_skill(self.new / "beta")
+
+        with working_directory(self.project):
+            PROVISIONER.provision()
+
+        names = [entry["name"] for entry in self.manifest_skills()]
+        self.assertNotIn("beta", names)
+        self.assertIn("gamma", names)
+        self.assertEqual(
+            os.readlink(self.project / ".agents" / "skills" / "beta"),
+            str(self.new / "beta"),
+        )
 
 
 if __name__ == "__main__":

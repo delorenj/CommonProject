@@ -1,30 +1,81 @@
 #!/usr/bin/env python3
 """
 sync-skills.py — manifest-driven skill fanout.
-Replaces the old symlink-based skillex monolithic fanout.
+
+Projects the `skills[]` entries and the `packs[]` members declared by the global
+and project `.agents/skills.json` manifests into every supported agent CLI
+skills directory.  Replaces the old symlink-based skillex monolithic fanout.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-# The list of agent CLI skill directories (relative to home or project root)
-CLI_SKILL_DIRS = [
-    ".gemini/skills",
-    ".codex/skills",
-    ".kimi/skills",
+DEFAULT_REGISTRY = "https://github.com/delorenj/skillex.git"
+
+# The supported agent CLI skill directories, per scope (relative to home for
+# `--scope global`, to the project root for `--scope project`).  Exactly six
+# CLIs are supported; opencode uses a different path per scope.
+CLI_SKILL_DIRS = {
+    "global": [
+        ".claude/skills",
+        ".codex/skills",
+        ".gemini/skills",
+        ".copilot/skills",
+        ".config/opencode/skills",
+        ".kimi-code/skills",
+    ],
+    "project": [
+        ".claude/skills",
+        ".codex/skills",
+        ".gemini/skills",
+        ".copilot/skills",
+        ".opencode/skills",
+        ".kimi-code/skills",
+    ],
+}
+
+# Directories this engine used to write to.  They are never written to any more
+# and never auto-deleted; `--prune-retired` opts in to removing ONLY managed
+# symlinks left behind inside them.
+RETIRED_CLI_SKILL_DIRS = [
     ".augment/skills",
-    ".config/opencode/skills",
     ".hermes/skills",
-    ".claude/skills",
     ".openclaw/skills",
+    ".kimi/skills",
+    ".crush/skills",
+    ".cursor/skills",
 ]
+
+# `~/.hermes/skills` is a writable Hermes runtime OVERLAY, not a projection of
+# this manifest.  It is never written to, never reported, and never pruned.
+NEVER_PRUNE_DIRS = {".hermes/skills"}
+
+# The single managed projection every CLI skills directory may alias.
+MANAGED_SKILLS_RELATIVE = (".agents", "skills")
+
+# Canonical pack identifier shape.  Enforced as a WARNING so packs that predate
+# the convention stay resolvable; the hard requirement (one safe path
+# component) is enforced by validate_skill_name().
+PACK_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+
+
+class PackUnavailable(Exception):
+    """The pack (or a declared member of it) is simply not installed here.
+
+    Only this failure class is downgraded to a warning by `"optional": true`.
+    Integrity failures — symlinks in the payload, path escapes, identity
+    mismatches, checksum mismatches — always raise and are never suppressed.
+    """
 
 
 def parse_args():
@@ -36,6 +87,14 @@ def parse_args():
         choices=["global", "project"],
         required=True,
         help="Whether to sync global skills or project-local skills.",
+    )
+    parser.add_argument(
+        "--prune-retired",
+        action="store_true",
+        help=(
+            "Remove managed symlinks left behind in retired CLI skill "
+            "directories.  Without this flag they are only reported."
+        ),
     )
     return parser.parse_args()
 
@@ -74,6 +133,16 @@ def validate_manifest_skill_names(manifest):
         manifest_skill_name(skill)
 
 
+def validate_manifest_packs(manifest):
+    """Normalize + validate every `packs[]` entry without touching the disk."""
+    packs = manifest.get("packs", [])
+    if packs is None:
+        return []
+    if not isinstance(packs, list):
+        raise ValueError("Manifest packs must be an array")
+    return [normalize_pack_entry(entry) for entry in packs]
+
+
 def assert_real_directory_chain(root, target):
     root = root.resolve(strict=True)
     target = target.absolute()
@@ -92,10 +161,46 @@ def assert_real_directory_chain(root, target):
             raise ValueError(f"Destination parent is not a directory: {current}")
 
 
-def preflight_cli_dirs(cli_dirs_base, skill_names):
+def cli_skill_dirs(scope):
+    try:
+        return CLI_SKILL_DIRS[scope]
+    except KeyError as error:
+        raise ValueError(f"Unknown scope: {scope!r}") from error
+
+
+def managed_skills_dir(base):
+    return base.joinpath(*MANAGED_SKILLS_RELATIVE)
+
+
+def lexical_symlink_target(link):
+    """Lexically expand a symlink WITHOUT resolving it.
+
+    Resolving an arbitrary directory symlink here would let the cleanup below
+    traverse outside the project (or through a broken target) before failing.
+    """
+    raw_target = Path(os.readlink(link))
+    lexical = raw_target if raw_target.is_absolute() else link.parent / raw_target
+    return Path(os.path.normpath(str(lexical)))
+
+
+def preflight_cli_dirs(cli_dirs_base, skill_names, scope="project"):
     base = cli_dirs_base.resolve(strict=True)
     active = []
-    for cli_rel_path in CLI_SKILL_DIRS:
+    claimed = set()
+
+    def add_target(cli_dir, expected_cli):
+        for name in skill_names:
+            destination = expected_cli / name
+            if destination.parent != expected_cli or len(destination.relative_to(expected_cli).parts) != 1:
+                raise ValueError(f"Skill destination escapes CLI directory: {destination}")
+        # Every CLI that aliases `.agents/skills` names the SAME destination.
+        # Project into it once; a second pass would only churn its own links.
+        if expected_cli in claimed:
+            return
+        claimed.add(expected_cli)
+        active.append((cli_dir, expected_cli))
+
+    for cli_rel_path in cli_skill_dirs(scope):
         cli_dir = base / cli_rel_path
         parent = cli_dir.parent
         if not parent.exists() and not parent.is_symlink():
@@ -105,16 +210,10 @@ def preflight_cli_dirs(cli_dirs_base, skill_names):
             raise ValueError(f"Unsafe CLI destination parent: {parent}")
         if cli_dir.is_symlink():
             # Generated projects intentionally expose the single managed skill
-            # projection to Claude as `.claude/skills -> ../.agents/skills`.
-            # Accept only that exact lexical alias.  Resolving an arbitrary
-            # directory symlink here would let cleanup below traverse outside
-            # the project (or through a broken target) before failing.
-            raw_target = os.readlink(cli_dir)
-            canonical_alias = (
-                cli_rel_path == ".claude/skills"
-                and raw_target == "../.agents/skills"
-            )
-            managed_skills = base / ".agents" / "skills"
+            # projection to the agent CLIs as `<cli>/skills -> .agents/skills`.
+            # Accept only that exact lexical alias (relative or absolute form).
+            managed_skills = managed_skills_dir(base)
+            canonical_alias = lexical_symlink_target(cli_dir) == managed_skills
             if not canonical_alias:
                 raise ValueError(f"Refusing symlinked CLI skills directory: {cli_dir}")
             assert_real_directory_chain(base, managed_skills)
@@ -124,16 +223,29 @@ def preflight_cli_dirs(cli_dirs_base, skill_names):
                 or not managed_skills.is_dir()
             ):
                 raise ValueError(
-                    f"Canonical Claude skills alias target is not a real directory: {managed_skills}"
+                    f"Managed skills alias target is not a real directory: {managed_skills}"
                 )
             resolved_cli = cli_dir.resolve(strict=True)
             if resolved_cli != managed_skills.resolve(strict=True):
                 raise ValueError(
-                    f"Canonical Claude skills alias escapes managed project skills: {cli_dir}"
+                    f"Managed skills alias escapes managed project skills: {cli_dir}"
                 )
-            # The alias already exposes the managed projection.  Do not fan out
-            # into `.agents/skills` a second time: that directory is owned by
-            # the pinned provisioner and may also contain real custom skills.
+            # The alias makes `.agents/skills` this CLI's skills directory, so
+            # that IS where this CLI's projection has to land.  Skipping it
+            # instead would silently drop every `skills[]` entry on a project
+            # where every supported CLI is aliased -- `provision-packs.py`
+            # only ever materializes pack members.
+            managed_expected = managed_skills.parent.resolve(strict=True) / managed_skills.name
+            # `.agents/skills` is shared with the pack provisioner and may hold
+            # real, hand-authored skill directories.  Never let the fanout
+            # rmtree one of those; fail here, before anything is mutated.
+            for name in skill_names:
+                if is_real_directory(managed_skills / name):
+                    raise ValueError(
+                        "Refusing to replace a real skill directory in the managed "
+                        f"projection: {managed_skills / name}"
+                    )
+            add_target(managed_skills, managed_expected)
             continue
         else:
             if cli_dir.exists() and not cli_dir.is_dir():
@@ -142,11 +254,7 @@ def preflight_cli_dirs(cli_dirs_base, skill_names):
             expected_cli = real_parent / cli_dir.name
             if cli_dir.exists() and cli_dir.resolve(strict=True) != expected_cli:
                 raise ValueError(f"CLI skills directory escapes its parent: {cli_dir}")
-        for name in skill_names:
-            destination = expected_cli / name
-            if destination.parent != expected_cli or len(destination.relative_to(expected_cli).parts) != 1:
-                raise ValueError(f"Skill destination escapes CLI directory: {destination}")
-        active.append((cli_dir, expected_cli))
+        add_target(cli_dir, expected_cli)
     return active
 
 
@@ -172,12 +280,33 @@ def ensure_cache_dir():
     return cache_dir
 
 
-def sync_registry(registry_url):
-    # Sanitize registry_url to create a folder name
+def registry_cache_dir(registry_url):
+    """Where a registry URL is cloned to / read back from.
+
+    The directory NAME is a wire format shared with two other surfaces that
+    address this exact directory on this exact machine:
+
+      * skillex ``src/skillex/paths.py`` -> ``sanitize_registry_url()``
+      * pjangler ``src/parity/index.ts`` -> ``registryCacheDirName()``
+
+    If they disagree, one manifest resolves to two different checkouts on one
+    machine and one of them is an unverified stale clone. This script is the
+    only surface allowed to CLONE, so it owns the name and the others follow.
+    Every non-alphanumeric byte becomes ``_``, so the result is always exactly
+    one safe path component - no separator, no ``.``, no ``..``.
+
+    Do not change this regex here alone.
+    """
     safe_name = re.sub(r"[^a-zA-Z0-9]", "_", registry_url)
-    cache_dir = (
-        Path(os.path.expanduser("~/.agents/.cache/registries")) / safe_name
-    )
+    if not safe_name:
+        # Would collapse to the registries/ parent and hand back the cache dir
+        # itself as if it were a checkout.
+        raise ValueError(f"Registry URL has no usable cache directory name: {registry_url!r}")
+    return Path(os.path.expanduser("~/.agents/.cache/registries")) / safe_name
+
+
+def sync_registry(registry_url):
+    cache_dir = registry_cache_dir(registry_url)
 
     if cache_dir.exists():
         try:
@@ -230,7 +359,7 @@ def sync_git_skill(name, source, version, cache_dir):
 
 
 def resolve_skill_path(
-    skill, cache_dir, base_dir, default_registry, registry_cache
+    skill, cache_dir, base_dir, default_registry, registry_roots
 ):
     if isinstance(skill, str):
         path = skill if "/" in skill else f"all-skills/{skill}"
@@ -241,16 +370,20 @@ def resolve_skill_path(
 
     if "registry_path" in skill:
         registry_url = skill.get("registry", default_registry)
-        if registry_url not in registry_cache:
-            registry_cache[registry_url] = sync_registry(registry_url)
-        full_path = registry_cache[registry_url] / skill["registry_path"]
-        if not full_path.exists():
-            print(
-                f"Warning: Registry skill {name} not found at {full_path}",
-                file=sys.stderr,
-            )
-            return name, None
-        return name, full_path
+        # Walk the same stable, memoized checkout ladder as packs[]. A path
+        # absent from the cache may legitimately exist in the developer
+        # checkout; existing checkouts are never fetched as a side effect.
+        attempted = []
+        for root in registry_root_candidates(registry_url, registry_roots):
+            full_path = root / skill["registry_path"]
+            attempted.append(full_path)
+            if full_path.exists():
+                return name, full_path
+        print(
+            f"Warning: Registry skill {name} not found in: {attempted}",
+            file=sys.stderr,
+        )
+        return name, None
 
     source = skill.get("source", "")
     if source.startswith("git@") or source.startswith("https://"):
@@ -280,16 +413,837 @@ def resolve_skill_path(
     return name, None
 
 
+# --------------------------------------------------------------------------- #
+# Packs
+# --------------------------------------------------------------------------- #
+
+
+def validate_path_component(value, label):
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a non-empty string")
+    if value in {".", ".."} or Path(value).is_absolute():
+        raise ValueError(f"Unsafe {label}: {value!r}")
+    if "/" in value or "\\" in value or Path(value).name != value:
+        raise ValueError(f"{label} must be one path component: {value!r}")
+    return value
+
+
+def safe_relative_path(value, label):
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a non-empty string")
+    if "\\" in value:
+        raise ValueError(f"{label} must not contain backslashes: {value!r}")
+    path = Path(value)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError(f"Unsafe {label}: {value!r}")
+    return path
+
+
+def manifest_entry_source_path(value):
+    """The `file:` source of a `skills[]` entry as a normalized absolute path.
+
+    LEXICAL on purpose: `os.path.abspath` normalizes without resolving symlinks,
+    so this matches `provision-packs.py` and pjangler byte-for-byte. It is a pure
+    predicate helper — it decides precedence, never safety, and never touches the
+    filesystem. `None` for anything that is not a local `file:` source.
+    """
+    if not isinstance(value, dict):
+        return None
+    source = value.get("source")
+    if not isinstance(source, str) or not source.startswith("file:"):
+        return None
+    try:
+        parsed = urlparse(source)
+        if parsed.netloc not in {"", "localhost"}:
+            return None
+        return Path(os.path.abspath(unquote(parsed.path)))
+    except (OSError, ValueError):
+        return None
+
+
+def is_contained_by(root, target):
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+class PackScope:
+    """Declared-pack ownership for ONE manifest (PACKS-CONTRACT section 6).
+
+    Section 6 pruning runs BEFORE the section 5 override: a `skills[]` entry a
+    declared pack already provides is redundant, not an override. Keeping that
+    decision here — and scoped to a single manifest — is what makes
+    `sync-skills.py`, `provision-packs.py`, and `pj audit` resolve every name to
+    the same path.
+
+    Deliberately narrow. An entry only counts as redundant when its own resolved
+    source lands inside the pack, or when it is a declared member pointing into
+    another version of the same pack family. An entry pointing anywhere else — a
+    local tree, a different registry, a customized copy — is the user's and is
+    never pruned.
+    """
+
+    def __init__(self):
+        self.roots = []
+        self.family_roots = {}
+
+    def record(self, resolved):
+        """Absorb one `resolve_pack` `on_resolved` record."""
+        root = resolved["root"]
+        if root not in self.roots:
+            self.roots.append(root)
+        family_root = resolved.get("family_root")
+        if family_root is not None:
+            # `packs/<name>/<version>` -> `packs/<name>` is the pack family. Only
+            # DECLARED names are attached: the family root is not the pack's own
+            # extent, so a sibling version only shadows names this pack provides.
+            self.family_roots.setdefault(family_root, set()).update(resolved["declared"])
+
+    def is_redundant(self, skill_entry):
+        source_path = manifest_entry_source_path(skill_entry)
+        if source_path is None:
+            return False
+        # (a) the entry's own source lands inside a resolved pack root.
+        if any(is_contained_by(root, source_path) for root in self.roots):
+            return True
+        # (b) a declared member pointing into ANY version of the same pack.
+        # Name lookup is TOLERANT here, matching pjangler's
+        # `skillManifestEntryName`: redundancy is a precedence question, so a
+        # malformed entry is simply "not redundant" rather than a hard failure.
+        # The strict `validate_skill_name()` gate still runs before any symlink.
+        name = skill_entry.get("name")
+        if not isinstance(name, str):
+            return False
+        return any(
+            name in members and is_contained_by(family, source_path)
+            for family, members in self.family_roots.items()
+        )
+
+
+def normalize_pack_entry(entry):
+    """String shorthand or object -> validated object form."""
+    if isinstance(entry, str):
+        raw = entry.strip()
+        if "@" in raw:
+            name, _, version = raw.partition("@")
+            entry = {"name": name, "version": version}
+        else:
+            entry = {"name": raw}
+    if not isinstance(entry, dict):
+        raise ValueError(f"Pack entry must be a string or object: {entry!r}")
+
+    normalized = dict(entry)
+    name = validate_skill_name(normalized.get("name"))
+    if not PACK_NAME_PATTERN.match(name):
+        print(
+            f"Warning: pack name {name!r} does not match the canonical "
+            f"{PACK_NAME_PATTERN.pattern} shape",
+            file=sys.stderr,
+        )
+    normalized["name"] = name
+
+    if normalized.get("version") is not None:
+        normalized["version"] = validate_path_component(
+            normalized["version"], f"pack {name} version"
+        )
+    if normalized.get("source") and normalized.get("registry_path"):
+        raise ValueError(
+            f"Pack {name} may not set both `source` and `registry_path`"
+        )
+    if normalized.get("source") is not None and not isinstance(normalized["source"], str):
+        raise ValueError(f"Pack {name} source must be a string")
+    if normalized.get("registry") is not None and not isinstance(normalized["registry"], str):
+        raise ValueError(f"Pack {name} registry must be a string")
+    if normalized.get("registry_path") is not None:
+        safe_relative_path(normalized["registry_path"], f"pack {name} registry_path")
+    for key in ("include", "exclude"):
+        values = normalized.get(key)
+        if values is None:
+            continue
+        if not isinstance(values, list):
+            raise ValueError(f"Pack {name} {key} must be an array of skill names")
+        for value in values:
+            validate_skill_name(value)
+    for key in ("optional", "sealed"):
+        if key in normalized and normalized[key] is not None and not isinstance(normalized[key], bool):
+            raise ValueError(f"Pack {name} {key} must be a boolean")
+    return normalized
+
+
+def version_sort_key(version):
+    """PEP440/semver-ish ordering: numeric-segment aware, prereleases sort low."""
+
+    def segments(text):
+        parts = []
+        for chunk in re.split(r"[._]", text):
+            if not chunk:
+                continue
+            if chunk.isdigit():
+                parts.append((0, int(chunk), ""))
+            else:
+                parts.append((1, 0, chunk))
+        return tuple(parts)
+
+    release, separator, prerelease = version.partition("-")
+    return (
+        segments(release),
+        1 if not separator else 0,
+        segments(prerelease),
+    )
+
+
+def read_regular_file(path):
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"Pack entry is not a regular file: {path}")
+        with os.fdopen(os.dup(descriptor), "rb") as handle:
+            return handle.read()
+    finally:
+        os.close(descriptor)
+
+
+def hash_regular_file(path):
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"Pack entry is not a regular file: {path}")
+        digest = hashlib.sha256()
+        with os.fdopen(os.dup(descriptor), "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def is_real_directory(path):
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def is_regular_file(path):
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def assert_real_pack_directory(path, label):
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError as error:
+        raise PackUnavailable(f"{label} is not present: {path}") from error
+    if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+        raise ValueError(f"{label} must be a real directory: {path}")
+    return path
+
+
+def assert_no_symlink_components(root, relative):
+    current = Path(root)
+    for part in Path(relative).parts:
+        current = current / part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError as error:
+            raise PackUnavailable(f"Pack path is not present: {current}") from error
+        if stat.S_ISLNK(mode):
+            raise ValueError(f"Refusing symlinked pack path component: {current}")
+    return current
+
+
+def safe_checksum_path(value):
+    path = Path(value)
+    if (
+        not value
+        or "\\" in value
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"Unsafe checksum path: {value!r}")
+    return path
+
+
+def scan_children(directory):
+    with os.scandir(directory) as entries:
+        return sorted(entries, key=lambda item: item.name)
+
+
+def registry_root_candidates(registry_url, roots_cache, allow_clone=True):
+    """Existing registry checkouts for `registry_url`, in contract order.
+
+    Candidate order is contract section 2 step 3:
+      `PJ_SKILLS_REGISTRY_ROOT` | `~/.agents/.cache/registries/<sanitized-url>` |
+      `~/code/skillex`.
+
+    `packs[]` and `skills[]` share this resolver and its memo. Existing
+    checkouts are never fetched: pinned packs must resolve offline and a sync
+    must not mutate a checkout merely by reading it. When no checkout exists,
+    this script may clone the registry once because it is the only surface
+    authorized to do so.
+    """
+    if registry_url in roots_cache:
+        return roots_cache[registry_url]
+
+    def adopt(candidate):
+        try:
+            if candidate.is_dir():
+                return candidate.resolve(strict=True)
+        except OSError:
+            pass
+        return None
+
+    override = os.environ.get("PJ_SKILLS_REGISTRY_ROOT", "").strip()
+    if override:
+        pinned = adopt(Path(override).expanduser())
+        if pinned is None:
+            raise PackUnavailable(
+                f"Explicit registry checkout is not available for {registry_url}: {override}"
+            )
+        roots_cache[registry_url] = [pinned]
+        return roots_cache[registry_url]
+
+    roots = []
+    for candidate in (registry_cache_dir(registry_url), Path(os.path.expanduser("~/code/skillex"))):
+        existing = adopt(candidate)
+        if existing is not None and existing not in roots:
+            roots.append(existing)
+
+    if not roots and allow_clone:
+        try:
+            roots.append(sync_registry(registry_url).resolve(strict=True))
+        except (subprocess.CalledProcessError, OSError) as error:
+            raise PackUnavailable(
+                f"No registry checkout available for {registry_url}: {error}"
+            ) from error
+
+    if not roots:
+        raise PackUnavailable(f"No registry checkout available for {registry_url}")
+    roots_cache[registry_url] = roots
+    return roots
+
+
+def registry_root(registry_url, roots_cache, allow_clone=True):
+    """Compatibility helper for callers that need the first checkout only."""
+    return registry_root_candidates(registry_url, roots_cache, allow_clone)[0]
+
+
+def select_pack_version(pack_dir):
+    """Highest version subdirectory, or None when this is not a version layout.
+
+    "Only subdirectories" is necessary but NOT sufficient: `packs/Kurzgesagt/`
+    is twelve skill directories and no pack.toml, which satisfies that test and
+    is emphatically not a version layout.  The discriminator is what those
+    children ARE -- a child holding a regular SKILL.md is a skill, so the parent
+    is a flat pack and the contract section 3 glob inventory applies instead.
+    """
+    versions = []
+    for entry in scan_children(pack_dir):
+        if entry.name.startswith("."):
+            continue
+        if not stat.S_ISDIR(entry.stat(follow_symlinks=False).st_mode):
+            # Not a pure "only subdirectories" layout -> flat pack.
+            return None
+        if is_regular_file(Path(entry.path) / "SKILL.md"):
+            return None
+        versions.append(entry.name)
+    if not versions:
+        return None
+    return max(versions, key=version_sort_key)
+
+
+def resolve_pack_root_in_registry(checkout_root, entry, registry_url):
+    """Resolve one pack inside one checkout, distinguishing absence from hostility."""
+    name = entry["name"]
+    version = entry.get("version")
+    if entry.get("registry_path"):
+        relative = safe_relative_path(entry["registry_path"], f"pack {name} registry_path")
+    else:
+        relative = Path("packs") / name
+        pack_dir = checkout_root / relative
+        assert_no_symlink_components(checkout_root, relative)
+        assert_real_pack_directory(pack_dir, f"Pack {name} directory")
+        if version:
+            relative = relative / version
+        elif not is_regular_file(pack_dir / "pack.toml"):
+            selected = select_pack_version(pack_dir)
+            if selected is not None:
+                relative = relative / selected
+
+    root = checkout_root / relative
+    assert_no_symlink_components(checkout_root, relative)
+    assert_real_pack_directory(root, f"Pack {name} root")
+
+    metadata = read_pack_metadata(root)
+    attested = metadata is not None
+    if metadata is not None:
+        pack = metadata.get("pack", {})
+        if not isinstance(pack, dict):
+            raise ValueError(f"Pack {name} pack.toml [pack] must be a table")
+        if pack.get("name") != name:
+            raise ValueError(f"Pack {name} pack.toml declares name {pack.get('name')!r}")
+        if version and pack.get("version") != version:
+            raise ValueError(
+                f"Pack {name} pack.toml declares version {pack.get('version')!r}, "
+                f"manifest pins {version!r}"
+            )
+    return root, f"{registry_url}:{relative.as_posix()}", attested
+
+
+def resolve_pack_root(entry, base_dir, cache_dir, registry_roots, default_registry):
+    """(pack_root, description) for a normalized pack entry."""
+    name = entry["name"]
+    version = entry.get("version")
+    source = entry.get("source")
+
+    if source:
+        if source.startswith("git@") or source.startswith("https://"):
+            root = sync_git_skill(name, source, version, cache_dir)
+            return assert_real_pack_directory(Path(root).absolute(), f"Pack {name} root"), source
+        parsed = urlparse(source)
+        if parsed.scheme != "file":
+            raise ValueError(f"Unknown pack source type for {name}: {source}")
+        if parsed.netloc not in {"", "localhost"}:
+            raise ValueError(f"Non-local file URI authority for pack {name}: {parsed.netloc}")
+        if parsed.query or parsed.fragment:
+            raise ValueError(f"file:// pack source must encode query/fragment characters: {source}")
+        local_path = Path(unquote(parsed.path))
+        root = (base_dir / local_path).absolute()
+        return assert_real_pack_directory(root, f"Pack {name} root"), source
+
+    registry_url = entry.get("registry", default_registry)
+    matches = []
+    first_unavailable = None
+    for checkout_root in registry_root_candidates(registry_url, registry_roots):
+        try:
+            matches.append(resolve_pack_root_in_registry(checkout_root, entry, registry_url))
+        except PackUnavailable as error:
+            if first_unavailable is None:
+                first_unavailable = error
+    if not matches:
+        raise first_unavailable or PackUnavailable(
+            f"Pack {name} is unavailable in every registry checkout for {registry_url}"
+        )
+    # A positively identified pack outranks a same-shaped but unattested tree;
+    # contract order still breaks ties. Present-but-hostile metadata raises in
+    # resolve_pack_root_in_registry and is never bypassed.
+    root, description, _attested = next(
+        (match for match in matches if match[2]), matches[0]
+    )
+    return root, description
+
+
+def read_pack_metadata(root):
+    try:
+        raw = read_regular_file(root / "pack.toml")
+    except FileNotFoundError:
+        return None
+    try:
+        return tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"Pack metadata at {root / 'pack.toml'} does not parse: {error}") from error
+
+
+def pack_declared_skills(root, metadata, entry):
+    """The full declared inventory (pre-include/exclude)."""
+    name = entry["name"]
+    if metadata is not None:
+        pack = metadata.get("pack", {})
+        if not isinstance(pack, dict):
+            raise ValueError(f"Pack {name} pack.toml [pack] must be a table")
+        if pack.get("name") != name:
+            raise ValueError(
+                f"Pack {name} pack.toml declares name {pack.get('name')!r}"
+            )
+        if entry.get("version") and pack.get("version") != entry["version"]:
+            raise ValueError(
+                f"Pack {name} pack.toml declares version {pack.get('version')!r}, "
+                f"manifest pins {entry['version']!r}"
+            )
+        freeform = metadata.get("freeform", {})
+        if not isinstance(freeform, dict):
+            raise ValueError(f"Pack {name} pack.toml [freeform] must be a table")
+        declared = freeform.get("skills", [])
+        if not isinstance(declared, list) or not all(isinstance(item, str) for item in declared):
+            raise ValueError(f"Pack {name} pack.toml [freeform].skills must be an array of strings")
+        if len(set(declared)) != len(declared):
+            raise ValueError(f"Pack {name} pack.toml declares duplicate skills")
+        for item in declared:
+            validate_skill_name(item)
+        return list(declared)
+
+    declared = []
+    for child in scan_children(root):
+        if child.name.startswith(".") or child.name.startswith("_"):
+            continue
+        mode = child.stat(follow_symlinks=False).st_mode
+        if stat.S_ISLNK(mode):
+            print(
+                f"Warning: pack {name} member {child.name!r} is a symlink; skipping",
+                file=sys.stderr,
+            )
+            continue
+        if not stat.S_ISDIR(mode):
+            continue
+        if not is_regular_file(Path(child.path) / "SKILL.md"):
+            continue
+        declared.append(validate_skill_name(child.name))
+    return declared
+
+
+def walk_pack_subtree(root, relative_root, files, directories):
+    def visit(directory):
+        for child in scan_children(directory):
+            path = Path(child.path)
+            relative = path.relative_to(root).as_posix()
+            mode = child.stat(follow_symlinks=False).st_mode
+            if stat.S_ISLNK(mode):
+                raise ValueError(f"Pack payload may not contain symlinks: {path}")
+            if stat.S_ISDIR(mode):
+                directories.add(relative)
+                visit(path)
+            elif stat.S_ISREG(mode):
+                files[relative] = hash_regular_file(path)
+            else:
+                raise ValueError(
+                    f"Pack payload may contain only regular files and directories: {path}"
+                )
+
+    directories.add(Path(relative_root).as_posix())
+    visit(root / relative_root)
+
+
+def pack_payload(root, metadata, declared):
+    """payload = pack.toml + every file under each DECLARED skill directory."""
+    files = {}
+    directories = set()
+    if metadata is not None:
+        files["pack.toml"] = hash_regular_file(root / "pack.toml")
+    for name in declared:
+        skill_dir = root / name
+        assert_real_pack_directory(skill_dir, f"Pack skill {name}")
+        if not is_regular_file(skill_dir / "SKILL.md"):
+            raise PackUnavailable(
+                f"Pack skill {name} is missing a regular SKILL.md: {skill_dir}"
+            )
+        walk_pack_subtree(root, name, files, directories)
+    return files, directories
+
+
+def parse_checksums(root):
+    raw = read_regular_file(root / "SHA256SUMS")
+    expected = {}
+    for line in raw.decode("utf-8").splitlines():
+        if not line:
+            continue
+        digest, separator, value = line.partition("  ")
+        if (
+            separator != "  "
+            or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+        ):
+            raise ValueError(f"Invalid SHA256SUMS entry in {root}: {line}")
+        relative = safe_checksum_path(value).as_posix()
+        if relative in expected:
+            raise ValueError(f"Duplicate SHA256SUMS entry in {root}: {relative}")
+        expected[relative] = digest
+    return expected
+
+
+def verify_sealed_pack(root, files, directories):
+    expected = parse_checksums(root)
+
+    missing = sorted(set(files) - set(expected))
+    if missing:
+        raise ValueError(
+            f"Pack payload at {root} is not covered by SHA256SUMS: {missing[:5]}"
+        )
+    for relative, digest in files.items():
+        if expected[relative] != digest:
+            raise ValueError(f"Pack digest mismatch at {root}: {relative}")
+
+    for relative, digest in sorted(expected.items()):
+        if relative in files:
+            continue
+        path = safe_checksum_path(relative)
+        try:
+            assert_no_symlink_components(root, path)
+            actual = hash_regular_file(root / path)
+        except (FileNotFoundError, PackUnavailable) as error:
+            # `assert_no_symlink_components` reports an absent component as
+            # PackUnavailable.  Inside a seal it is nothing of the sort: rule 3
+            # says a checksummed path may not be absent, so this is an
+            # integrity failure and must never be `optional`-suppressed.
+            raise ValueError(
+                f"SHA256SUMS at {root} references a missing path: {relative}"
+            ) from error
+        if actual != digest:
+            raise ValueError(f"Pack digest mismatch at {root}: {relative}")
+
+    covered = set()
+    for relative in files:
+        parts = relative.split("/")
+        for index in range(1, len(parts)):
+            covered.add("/".join(parts[:index]))
+    unauthenticated = sorted(directory for directory in directories if directory not in covered)
+    if unauthenticated:
+        raise ValueError(
+            f"Pack at {root} contains unauthenticated empty directories: {unauthenticated[:5]}"
+        )
+
+
+def verify_pack(root, metadata, declared, sealed):
+    """Structural validation always; checksum verification when sealed.
+
+    A seal is a COMPLETENESS claim: the pack asserts that exactly this payload,
+    and every path its SHA256SUMS names, is present with these digests.  So a
+    sealed pack that is missing a declared skill, a SKILL.md, or a checksummed
+    file has failed integrity verification -- it is not "an uninstalled pack".
+    Nothing raised from here while `sealed` may therefore be a PackUnavailable,
+    because that class (and only that class) is what `"optional": true`
+    downgrades to a warning in resolve_pack().
+    """
+    try:
+        files, directories = pack_payload(root, metadata, declared)
+        if metadata is not None:
+            payload_files = metadata.get("source", {}).get("payload_files")
+            if isinstance(payload_files, int):
+                actual = sum(1 for relative in files if relative != "pack.toml")
+                if actual != payload_files:
+                    raise ValueError(
+                        f"Pack at {root} declares {payload_files} payload files but has {actual}"
+                    )
+        if sealed:
+            if not is_regular_file(root / "SHA256SUMS"):
+                raise ValueError(f"Sealed pack at {root} has no regular SHA256SUMS")
+            verify_sealed_pack(root, files, directories)
+    except PackUnavailable as error:
+        if not sealed:
+            # Unsealed packs get structural validation only, and a missing
+            # member there really is "not installed here" -- still optional.
+            raise
+        raise ValueError(
+            f"Sealed pack at {root} failed integrity verification: {error}"
+        ) from error
+    return files
+
+
+def resolve_pack(
+    entry,
+    cache_dir,
+    base_dir,
+    default_registry,
+    registry_roots,
+    managed_roots,
+    on_resolved=None,
+):
+    """Resolve one normalized pack entry to an ordered list of (name, path).
+
+    `on_resolved`, when given, is called once per pack that resolved AND
+    verified, with a record describing WHERE the pack came from:
+
+        {"name", "root", "family_root", "declared"}
+
+    `root` is the exact pack root (e.g. `packs/bmad/6.10.2`); `family_root` is
+    `packs/bmad` when the pack lives under a version directory, else None. The
+    two are reported SEPARATELY on purpose: a sibling version under the same
+    family root is NOT this pack, so callers must never treat the family root
+    as the pack's own extent. `declared` is the full inventory before
+    include/exclude, so a caller can tell "this pack provides that name" from
+    "some other version of this pack does".
+    """
+    name = entry["name"]
+    optional = bool(entry.get("optional", False))
+    try:
+        root, description = resolve_pack_root(
+            entry, base_dir, cache_dir, registry_roots, default_registry
+        )
+
+        family_root = root.parent if root.parent.name == name else None
+        managed_roots.add(root)
+        if family_root is not None:
+            # `packs/<name>/<version>` -> the whole family is a managed root.
+            managed_roots.add(family_root)
+
+        metadata = read_pack_metadata(root)
+        declared = pack_declared_skills(root, metadata, entry)
+
+        sealed = bool(entry.get("sealed", False))
+        policy = metadata.get("policy", {}) if isinstance(metadata, dict) else {}
+        if isinstance(policy, dict) and policy.get("sealed") is True:
+            # The manifest may only TIGHTEN: `sealed: false` cannot disable this.
+            sealed = True
+
+        verify_pack(root, metadata, declared, sealed)
+    except PackUnavailable as error:
+        if optional:
+            print(f"Warning: optional pack {name} skipped: {error}", file=sys.stderr)
+            return []
+        raise ValueError(f"Pack {name} could not be resolved: {error}") from error
+
+    if on_resolved is not None:
+        on_resolved(
+            {
+                "name": name,
+                "root": root,
+                "family_root": family_root,
+                "declared": list(declared),
+            }
+        )
+
+    members = list(declared)
+    include = entry.get("include")
+    if include is not None:
+        wanted = set(include)
+        unknown = sorted(wanted - set(members))
+        if unknown:
+            print(
+                f"Warning: pack {name} include names not in inventory: {unknown}",
+                file=sys.stderr,
+            )
+        members = [item for item in members if item in wanted]
+    exclude = entry.get("exclude")
+    if exclude:
+        unwanted = set(exclude)
+        members = [item for item in members if item not in unwanted]
+
+    print(
+        f"pack {name}"
+        + (f"@{entry['version']}" if entry.get("version") else "")
+        + f" -> {root} "
+        f"({len(members)}/{len(declared)} skill(s), "
+        f"{'sealed' if sealed else 'unsealed'}, via {description})"
+    )
+    return [(validate_skill_name(item), root / item) for item in members]
+
+
+# --------------------------------------------------------------------------- #
+# Retired directories
+# --------------------------------------------------------------------------- #
+
+
+def default_managed_roots():
+    roots = set()
+    for candidate in (
+        Path(os.path.expanduser("~/.agents/.cache")),
+        Path(os.path.expanduser("~/code/skillex")),
+    ):
+        try:
+            if candidate.is_dir():
+                roots.add(candidate.resolve(strict=True))
+        except OSError:
+            continue
+    override = os.environ.get("PJ_SKILLS_REGISTRY_ROOT", "").strip()
+    if override:
+        try:
+            roots.add(Path(override).expanduser().resolve(strict=True))
+        except OSError:
+            pass
+    return roots
+
+
+def is_inside_managed_root(target, managed_roots):
+    for root in managed_roots:
+        try:
+            Path(target).relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def handle_retired_dirs(cli_dirs_base, managed_roots, prune=False):
+    base = cli_dirs_base.resolve(strict=True)
+    candidates = []
+    for cli_rel_path in RETIRED_CLI_SKILL_DIRS:
+        if cli_rel_path in NEVER_PRUNE_DIRS:
+            continue
+        retired = base / cli_rel_path
+        if not retired.exists() and not retired.is_symlink():
+            continue
+        assert_real_directory_chain(base, retired.parent)
+        if retired.is_symlink():
+            print(
+                f"sync-skills: retired {retired} is a symlink; leaving it alone",
+                file=sys.stderr,
+            )
+            continue
+        if not retired.is_dir():
+            continue
+        real_retired = retired.resolve(strict=True)
+        if real_retired != retired.parent.resolve(strict=True) / retired.name:
+            raise ValueError(f"Retired skills directory escapes its parent: {retired}")
+        for child in scan_children(real_retired):
+            if not stat.S_ISLNK(child.stat(follow_symlinks=False).st_mode):
+                continue
+            target = os.path.realpath(child.path)
+            if not is_inside_managed_root(target, managed_roots):
+                continue
+            candidates.append((Path(child.path), target))
+
+    if not candidates:
+        return 0
+
+    if not prune:
+        print(
+            f"sync-skills: {len(candidates)} managed symlink(s) remain in retired "
+            f"CLI skill dirs under {base}; re-run with --prune-retired to remove them:"
+        )
+        for link, target in candidates:
+            print(f"  would prune {link} -> {target}")
+        return 0
+
+    pruned = 0
+    for link, target in candidates:
+        parent = link.parent
+        assert_real_directory_chain(base, parent)
+        if parent.is_symlink() or not parent.is_dir():
+            raise ValueError(f"Retired skills parent changed after preflight: {parent}")
+        try:
+            mode = os.lstat(link).st_mode
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISLNK(mode):
+            raise ValueError(f"Retired entry is no longer a symlink: {link}")
+        os.unlink(link)
+        pruned += 1
+        print(f"pruned {link} -> {target}")
+    print(f"sync-skills: pruned {pruned} retired symlink(s) under {base}")
+    return pruned
+
+
+# --------------------------------------------------------------------------- #
+# Fanout
+# --------------------------------------------------------------------------- #
+
+
 def fanout_to_cli(
-    cli_dirs_base, skills_map, active_cli_dirs=None, before_mutation=None
+    cli_dirs_base,
+    skills_map,
+    active_cli_dirs=None,
+    before_mutation=None,
+    scope="project",
 ):
     """
-    Creates symlinks in each of the CLI_SKILL_DIRS relative to cli_dirs_base
-    pointing to the resolved paths in skills_map.
+    Creates symlinks in each of the supported CLI skill dirs relative to
+    cli_dirs_base pointing to the resolved paths in skills_map.
     """
     skill_names = [validate_skill_name(name) for name in skills_map]
     if active_cli_dirs is None:
-        active_cli_dirs = preflight_cli_dirs(cli_dirs_base, skill_names)
+        active_cli_dirs = preflight_cli_dirs(cli_dirs_base, skill_names, scope)
+    if skill_names and not active_cli_dirs:
+        # A sync that resolves skills but has nowhere to put them has FAILED.
+        # Reporting success here is how a topology change silently unprojects
+        # every skill; make it loud instead.
+        raise ValueError(
+            f"No supported agent CLI skills directory exists under {cli_dirs_base}; "
+            f"refusing to silently drop {len(skill_names)} skill(s): "
+            f"{sorted(skill_names)[:5]}"
+        )
     if before_mutation is not None:
         before_mutation()
     linked_total = 0
@@ -332,6 +1286,18 @@ def fanout_to_cli(
     )
 
 
+def manifest_layer(manifest_path):
+    manifest = load_manifest(manifest_path)
+    validate_manifest_skill_names(manifest)
+    packs = validate_manifest_packs(manifest)
+    return {
+        "manifest": manifest,
+        "packs": packs,
+        "base_dir": manifest_path.parent,
+        "registry": manifest.get("registry", DEFAULT_REGISTRY),
+    }
+
+
 def main():
     args = parse_args()
 
@@ -341,108 +1307,105 @@ def main():
     # Destination topology is a security boundary.  Validate every active CLI
     # directory before cloning/updating registries, creating caches, or changing
     # any skill link so one unsafe/broken symlink produces zero mutation.
-    preflight_names = []
-    preflight_base = Path(os.path.expanduser("~"))
+    #
+    # Precedence, lowest to highest (contract section 5):
+    #   global packs[] -> global skills[] -> project packs[] -> project skills[]
+    layers = []
     if args.scope == "global":
-        preflight_manifest = load_manifest(global_manifest_path)
-        validate_manifest_skill_names(preflight_manifest)
-        preflight_names.extend(
-            manifest_skill_name(skill)
-            for skill in preflight_manifest.get("skills", [])
-        )
+        preflight_base = Path(os.path.expanduser("~"))
+        print(f"Loading global manifest from {global_manifest_path}")
+        layers.append(manifest_layer(global_manifest_path))
     else:
         preflight_base = Path(os.getcwd())
-        preflight_manifest = load_manifest(project_manifest_path)
-        validate_manifest_skill_names(preflight_manifest)
+        print(f"Loading project manifest from {project_manifest_path}")
+        project_layer = manifest_layer(project_manifest_path)
+        if project_layer["manifest"].get("inherit_global", False):
+            print("Inheriting global skills...")
+            layers.append(manifest_layer(global_manifest_path))
+        layers.append(project_layer)
+
+    preflight_names = []
+    for layer in layers:
         preflight_names.extend(
             manifest_skill_name(skill)
-            for skill in preflight_manifest.get("skills", [])
+            for skill in layer["manifest"].get("skills", [])
         )
-        if preflight_manifest.get("inherit_global", False):
-            inherited = load_manifest(global_manifest_path)
-            validate_manifest_skill_names(inherited)
-            preflight_names.extend(
-                manifest_skill_name(skill)
-                for skill in inherited.get("skills", [])
-            )
-    active_cli_dirs = preflight_cli_dirs(preflight_base, preflight_names)
+    preflight_cli_dirs(preflight_base, preflight_names, args.scope)
+
     cache_dir = ensure_cache_dir()
 
     skills_to_sync = {}  # name -> actual_path
-    registry_cache = {}
+    # ONE stable memo of registry URL -> ordered checkout roots, shared by
+    # `packs[]` and `skills[]`. Existing roots are never refreshed mid-run.
+    registry_roots = {}
+    managed_roots = default_managed_roots()
 
-    if args.scope == "global":
-        print(f"Loading global manifest from {global_manifest_path}")
-        manifest = load_manifest(global_manifest_path)
-        validate_manifest_skill_names(manifest)
-        default_registry = manifest.get(
-            "registry", "https://github.com/delorenj/skillex.git"
-        )
-        base_dir = global_manifest_path.parent
-        for skill in manifest.get("skills", []):
-            name, path = resolve_skill_path(
-                skill,
+    for layer in layers:
+        # Section 6 redundancy is scoped to ONE manifest: a project `skills[]`
+        # entry is weighed only against packs the project manifest declares,
+        # never against the global manifest's packs.  This is exactly the scope
+        # provision-packs.py and `pj audit` use, so all three surfaces resolve
+        # every name to the same path.  Cross-layer precedence still comes from
+        # the 1-4 ordering above, so a project pack does override a global
+        # `skills[]` entry.
+        pack_scope = PackScope()
+        for entry in layer["packs"]:
+            for name, path in resolve_pack(
+                entry,
                 cache_dir,
-                base_dir,
-                default_registry,
-                registry_cache,
-            )
-            if path:
+                layer["base_dir"],
+                layer["registry"],
+                registry_roots,
+                managed_roots,
+                on_resolved=pack_scope.record,
+            ):
+                # Later packs override earlier ones.
                 skills_to_sync[name] = path
-
-        # Fanout globally (home dir)
-        fanout_to_cli(
-            Path(os.path.expanduser("~")),
-            skills_to_sync,
-            active_cli_dirs=active_cli_dirs,
-        )
-
-    elif args.scope == "project":
-        print(f"Loading project manifest from {project_manifest_path}")
-        manifest = load_manifest(project_manifest_path)
-        validate_manifest_skill_names(manifest)
-        default_registry = manifest.get(
-            "registry", "https://github.com/delorenj/skillex.git"
-        )
-
-        # Check if we should inherit global skills
-        if manifest.get("inherit_global", False):
-            print("Inheriting global skills...")
-            global_manifest = load_manifest(global_manifest_path)
-            validate_manifest_skill_names(global_manifest)
-            global_registry = global_manifest.get(
-                "registry", "https://github.com/delorenj/skillex.git"
-            )
-            for skill in global_manifest.get("skills", []):
-                name, path = resolve_skill_path(
-                    skill,
-                    cache_dir,
-                    global_manifest_path.parent,
-                    global_registry,
-                    registry_cache,
+        for skill in layer["manifest"].get("skills", []):
+            # Contract section 5 step 1: an entry a declared pack already
+            # provides is REDUNDANT, not an override.  Dropping it here is what
+            # keeps `bmad-help` from pinning itself to a stale pack version
+            # while its 74 siblings follow the declared pack.
+            if pack_scope.is_redundant(skill):
+                print(
+                    f"Skipping redundant skills[] entry {manifest_skill_name(skill)}: "
+                    f"provided by a declared pack"
                 )
-                if path:
-                    skills_to_sync[name] = path
-
-        base_dir = project_manifest_path.parent
-        for skill in manifest.get("skills", []):
+                continue
             name, path = resolve_skill_path(
                 skill,
                 cache_dir,
-                base_dir,
-                default_registry,
-                registry_cache,
+                layer["base_dir"],
+                layer["registry"],
+                registry_roots,
             )
             if path:
-                # Overrides global skill of the same name
+                # Contract section 5 step 2: a surviving explicit skills[] entry
+                # always overrides a pack member.
                 skills_to_sync[name] = path
 
-        # Fanout locally (project dir)
-        fanout_to_cli(
-            Path(os.getcwd()),
-            skills_to_sync,
-            active_cli_dirs=active_cli_dirs,
-        )
+    managed_roots.update(
+        Path(root)
+        for roots in registry_roots.values()
+        for root in roots
+    )
+
+    # Re-validate the full destination topology, now including every
+    # pack-derived skill name, immediately before the first mutation.
+    active_cli_dirs = preflight_cli_dirs(
+        preflight_base,
+        [validate_skill_name(name) for name in skills_to_sync],
+        args.scope,
+    )
+
+    fanout_to_cli(
+        preflight_base,
+        skills_to_sync,
+        active_cli_dirs=active_cli_dirs,
+        scope=args.scope,
+    )
+
+    handle_retired_dirs(preflight_base, managed_roots, prune=args.prune_retired)
 
 
 if __name__ == "__main__":

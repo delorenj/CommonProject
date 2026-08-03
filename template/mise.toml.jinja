@@ -26,7 +26,7 @@ script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh
 # leave .env byte-for-byte intact. `|| true` keeps shell entry safe under set -e.
 script = "[ -f '{% raw %}{{config_root}}{% endraw %}/.env.op' ] && command -v op >/dev/null 2>&1 && { CDPATH= cd '{% raw %}{{config_root}}{% endraw %}' && umask 077 && t=$(mktemp .env.inject.XXXXXX) && op inject -i .env.op -o $t --force && mv $t .env || rm -f $t; } || true"
 [[hooks.enter]]
-script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-bmad-skills.py'"
+script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py'"
 [[hooks.enter]]
 script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project"
 [[hooks.enter]]
@@ -58,12 +58,12 @@ run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh'"
 
 [tasks.skills-sync]
 description = "Sync skills from manifest to local CLI dirs"
-depends = ["skills-provision-bmad"]
+depends = ["skills-provision-packs"]
 run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project"
 
-[tasks.skills-provision-bmad]
-description = "Provision pinned BMAD skills from the Skillex pack"
-run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-bmad-skills.py'"
+[tasks.skills-provision-packs]
+description = "Provision every Skillex pack declared in .agents/skills.json"
+run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py'"
 {% if agent_hooks_layer %}
 # --- Project-scoped agent hooks + skill fan-out (see .agents/hooks/README.md) ---
 
