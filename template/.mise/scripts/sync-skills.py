@@ -184,15 +184,22 @@ def lexical_symlink_target(link):
 
 
 def preflight_cli_dirs(cli_dirs_base, skill_names, scope="project"):
+    # Re-validate here rather than trusting the caller: this is the guard that
+    # decides where mutations may land, and `expected_cli / ".."` would satisfy
+    # the containment check below on its own.
+    skill_names = [validate_skill_name(name) for name in skill_names]
     base = cli_dirs_base.resolve(strict=True)
     active = []
     claimed = set()
 
-    def add_target(cli_dir, expected_cli):
+    def assert_destinations_contained(expected_cli):
         for name in skill_names:
             destination = expected_cli / name
             if destination.parent != expected_cli or len(destination.relative_to(expected_cli).parts) != 1:
                 raise ValueError(f"Skill destination escapes CLI directory: {destination}")
+
+    def add_target(cli_dir, expected_cli):
+        assert_destinations_contained(expected_cli)
         # Every CLI that aliases `.agents/skills` names the SAME destination.
         # Project into it once; a second pass would only churn its own links.
         if expected_cli in claimed:
@@ -236,6 +243,9 @@ def preflight_cli_dirs(cli_dirs_base, skill_names, scope="project"):
             # where every supported CLI is aliased -- `provision-packs.py`
             # only ever materializes pack members.
             managed_expected = managed_skills.parent.resolve(strict=True) / managed_skills.name
+            # Containment first, so an escaping name is reported as an escape
+            # rather than as whatever it happens to collide with.
+            assert_destinations_contained(managed_expected)
             # `.agents/skills` is shared with the pack provisioner and may hold
             # real, hand-authored skill directories.  Never let the fanout
             # rmtree one of those; fail here, before anything is mutated.
@@ -735,11 +745,20 @@ def registry_root(registry_url, roots_cache, allow_clone=True):
 def select_pack_version(pack_dir):
     """Highest version subdirectory, or None when this is not a version layout.
 
-    "Only subdirectories" is necessary but NOT sufficient: `packs/Kurzgesagt/`
-    is twelve skill directories and no pack.toml, which satisfies that test and
-    is emphatically not a version layout.  The discriminator is what those
-    children ARE -- a child holding a regular SKILL.md is a skill, so the parent
-    is a flat pack and the contract section 3 glob inventory applies instead.
+    "Only subdirectories" is necessary but NOT sufficient.  A pack.toml-less
+    `packs/<name>/` whose children are REAL directories that each hold a regular
+    SKILL.md satisfies that test and is emphatically not a version layout -- it
+    is a flat pack, and the contract section 3 glob inventory applies instead.
+    The discriminator is what those children ARE: a child holding a regular
+    SKILL.md is a skill, so its parent cannot be a version root.  Contrast
+    `packs/bmad/`, also pack.toml-less and also all real directories, but whose
+    children (6.10.1-next.31/, 6.10.2/) hold no top-level SKILL.md -- that IS a
+    version layout and the highest version is selected.
+
+    `packs/Kurzgesagt/` is NOT an example of this: its twelve children are all
+    symlinks, so it is disqualified one check earlier by the S_ISDIR-on-lstat
+    test below and never reaches the SKILL.md test.  (Earlier revisions of this
+    comment cited it as "twelve skill directories"; that was wrong.)
     """
     versions = []
     for entry in scan_children(pack_dir):
