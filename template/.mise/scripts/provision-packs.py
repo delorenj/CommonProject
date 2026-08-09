@@ -113,15 +113,20 @@ def apply_root_override(entry: dict) -> dict:
 
 
 def resolve_declared_packs(manifest: dict, base_dir: Path):
-    """(declared_members, implicit_members, declared_packs) for this manifest.
+    """(declared_members, implicit_members, declared_packs, implicit_packs).
 
     `declared_members` are projected only; `implicit_members` are ALSO recorded
-    in `skills[]` (the historical BMAD pin behaviour).
+    in `skills[]` (the historical BMAD pin behaviour). Both are `name -> LEAF
+    path`: under contract 3b flatten a member lives at
+    `<root>/<container>/.../<name>`, at ANY depth, so the path may NOT be
+    reconstructed from the name anywhere downstream.
 
-    `declared_packs` is one record per declared pack that resolved AND verified,
-    keeping the pack's own root, its family root and its declared inventory
+    `declared_packs` / `implicit_packs` are one record per pack that resolved AND
+    verified, keeping the pack's own root, its family root and its inventory
     SEPARATE — see `declared_pack_scope()` for why collapsing them into a flat
-    root list silently deletes user skills.
+    root list silently deletes user skills. The records are also the ONLY
+    reliable source of a pack's root now that `member.parent` is a container
+    under flatten rather than the pack root.
     """
     entries = engine.validate_manifest_packs(manifest)
     default_registry = manifest.get("registry", SKILLS_REGISTRY)
@@ -146,17 +151,24 @@ def resolve_declared_packs(manifest: dict, base_dir: Path):
             declared_members[name] = path
 
     implicit_members: dict[str, Path] = {}
+    implicit_packs: list[dict] = []
     if not any(entry["name"] == BMAD_PACK_NAME for entry in entries):
         # Same call shape as a declared pack above, so the pin cannot resolve
         # anywhere a declared `bmad` entry would not.
         pinned = engine.normalize_pack_entry(apply_root_override(implicit_bmad_entry()))
         pinned["sealed"] = True
         for name, path in engine.resolve_pack(
-            pinned, cache_dir, base_dir, default_registry, registry_roots, managed_roots
+            pinned,
+            cache_dir,
+            base_dir,
+            default_registry,
+            registry_roots,
+            managed_roots,
+            on_resolved=implicit_packs.append,
         ):
             implicit_members[name] = path
 
-    return declared_members, implicit_members, declared_packs
+    return declared_members, implicit_members, declared_packs, implicit_packs
 
 
 def declared_ownership_roots(declared_packs) -> list[Path]:
@@ -342,12 +354,18 @@ def provision(
     if not isinstance(existing, list):
         raise ValueError(f"{manifest_path} skills must be an array")
 
-    declared_members, implicit_members, declared_packs = resolve_declared_packs(manifest, agents_path)
+    declared_members, implicit_members, declared_packs, implicit_packs = resolve_declared_packs(
+        manifest, agents_path
+    )
     if after_preflight is not None:
         after_preflight()
 
     implicit_names = set(implicit_members)
-    implicit_roots = {path.parent for path in implicit_members.values()}
+    # From the resolve record, NOT `member.parent`: under contract 3b flatten a
+    # member's parent is its container — possibly several levels below the pack
+    # root — so deriving the root from a member would claim ownership of one
+    # container instead of the whole pack.
+    implicit_roots = {pack["root"] for pack in implicit_packs}
     declared_roots = declared_ownership_roots(declared_packs)
     declared_scope = declared_pack_scope(declared_packs)
 
@@ -489,7 +507,9 @@ def provision(
             atomic_write(manifest_path, next_manifest, manifest_mode)
         # Re-validate every pack at the mutation boundary: a pack tampered with
         # after preflight must roll the whole projection back.
-        postflight_declared, postflight_implicit, _ = resolve_declared_packs(manifest, agents_path)
+        postflight_declared, postflight_implicit, _, _ = resolve_declared_packs(
+            manifest, agents_path
+        )
         postflight = {**postflight_declared, **postflight_implicit}
         if {name: postflight.get(name) for name in expected} != expected:
             raise ValueError("Skillex pack inventory changed after preflight")

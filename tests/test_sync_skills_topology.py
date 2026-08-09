@@ -233,5 +233,57 @@ class RegistryPackLadderTests(unittest.TestCase):
             self.resolve()
 
 
+class FlattenedLeafNameTests(unittest.TestCase):
+    """Contract 3b: a flattened LEAF name is lifted straight off the filesystem.
+
+    Without flatten a `pack.toml` pack projects exactly the strings its author typed
+    into `[freeform].skills`.  Flatten is the one place an upstream directory name
+    becomes a symlink name in six CLI skill directories, where `-rf`, `--help`, `*`
+    and embedded control characters are argv- and glob-hostile.
+    """
+
+    HOSTILE = ["*", "--help", "-rf", "a\nb", "con:", "tab\there", "SKILL.md-ish", "Upper"]
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="commonproject-flatten-names-")
+        self.root = Path(self.temporary.name) / "pack"
+        (self.root / "grp").mkdir(parents=True)
+        (self.root / "grp" / "DESCRIPTION.md").write_text("container metadata\n")
+        for name in [*self.HOSTILE, "good-leaf"]:
+            leaf = self.root / "grp" / name
+            leaf.mkdir()
+            (leaf / "SKILL.md").write_text("leaf\n")
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def flatten(self, declared):
+        return SYNC.flatten_pack_inventory(self.root, "demo", declared)
+
+    def test_hostile_leaf_basenames_are_skipped(self) -> None:
+        projected = [name for name, _relative in self.flatten(["grp"])]
+        self.assertEqual(projected, ["good-leaf"])
+        for name in self.HOSTILE:
+            self.assertNotIn(name, projected)
+
+    def test_container_of_only_hostile_leaves_still_reports(self) -> None:
+        allbad = self.root / "allbad"
+        allbad.mkdir()
+        for name in ("-delete", "?glob"):
+            leaf = allbad / name
+            leaf.mkdir()
+            (leaf / "SKILL.md").write_text("leaf\n")
+        self.assertEqual([name for name, _ in self.flatten(["allbad"])], [])
+
+    def test_declared_leaf_keeps_its_author_declared_name(self) -> None:
+        """The gate applies to EXPANSION only, never to a name the author typed."""
+        legacy = self.root / "Legacy_Skill"
+        legacy.mkdir()
+        (legacy / "SKILL.md").write_text("leaf\n")
+        self.assertEqual(
+            [name for name, _ in self.flatten(["Legacy_Skill"])], ["Legacy_Skill"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,10 +63,14 @@ NEVER_PRUNE_DIRS = {".hermes/skills"}
 # The single managed projection every CLI skills directory may alias.
 MANAGED_SKILLS_RELATIVE = (".agents", "skills")
 
+# The canonical identifier shape the contract mandates for pack and skill names
+# (section 1): lowercase alphanumerics and dashes, no leading/trailing dash.
+CANONICAL_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+
 # Canonical pack identifier shape.  Enforced as a WARNING so packs that predate
 # the convention stay resolvable; the hard requirement (one safe path
 # component) is enforced by validate_skill_name().
-PACK_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+PACK_NAME_PATTERN = CANONICAL_NAME_PATTERN
 
 
 class PackUnavailable(Exception):
@@ -509,13 +513,18 @@ class PackScope:
             # `packs/<name>/<version>` -> `packs/<name>` is the pack family. Only
             # DECLARED names are attached: the family root is not the pack's own
             # extent, so a sibling version only shadows names this pack provides.
+            # Under flatten those names are the FLATTENED ones — see
+            # `resolve_pack` — which is what a `skills[]` entry would be named.
             self.family_roots.setdefault(family_root, set()).update(resolved["declared"])
 
     def is_redundant(self, skill_entry):
         source_path = manifest_entry_source_path(skill_entry)
         if source_path is None:
             return False
-        # (a) the entry's own source lands inside a resolved pack root.
+        # (a) the entry's own source lands inside a resolved pack root. Holds
+        # unchanged under flatten: a hand-written entry pointing at the leaf
+        # `<root>/apple/apple-notes` is contained by `<root>`, so the pack still
+        # wins and the entry is still pruned.
         if any(is_contained_by(root, source_path) for root in self.roots):
             return True
         # (b) a declared member pointing into ANY version of the same pack.
@@ -576,7 +585,7 @@ def normalize_pack_entry(entry):
             raise ValueError(f"Pack {name} {key} must be an array of skill names")
         for value in values:
             validate_skill_name(value)
-    for key in ("optional", "sealed"):
+    for key in ("optional", "sealed", "flatten"):
         if key in normalized and normalized[key] is not None and not isinstance(normalized[key], bool):
             raise ValueError(f"Pack {name} {key} must be a boolean")
     return normalized
@@ -867,8 +876,233 @@ def read_pack_metadata(root):
         raise ValueError(f"Pack metadata at {root / 'pack.toml'} does not parse: {error}") from error
 
 
-def pack_declared_skills(root, metadata, entry):
-    """The full declared inventory (pre-include/exclude)."""
+def pack_flatten_enabled(metadata, entry):
+    """Contract section 3b: is this pack projected through a flatten expansion?
+
+    Enabled when EITHER `pack.toml [policy] flatten = true` OR the manifest pack
+    entry sets `"flatten": true`. Layout is a property of the PACK, so pack.toml
+    is the natural home; the manifest field exists for packs that ship no
+    pack.toml. Neither side can turn the other OFF — this is a union, not an
+    override, because a nested pack projected flat-side-up would produce
+    container directories where the CLIs expect skills.
+
+    OFF unless someone says otherwise: every pack that predates 3b keeps its
+    exact section 3 inventory.
+    """
+    if entry.get("flatten") is True:
+        return True
+    policy = metadata.get("policy", {}) if isinstance(metadata, dict) else {}
+    return isinstance(policy, dict) and policy.get("flatten") is True
+
+
+def container_leaves(container):
+    """Every skill reachable under `container`, at ANY depth (contract 3b).
+
+    Returns `(leaves, symlinked)`, both lists of POSIX-style paths relative to
+    `container`, in walk order.
+
+    The descent rule is the whole of the expansion: descend while a node is a
+    container; a node holding a regular SKILL.md IS a skill and is never
+    descended into. That mirrors upstream `agent/skill_utils.py`'s
+    `iter_skill_index_files`, a depth-agnostic `os.walk`, and it is why
+    hermes-base's `mlops/evaluation/lm-evaluation-harness` IS a member —
+    `mlops/evaluation` carries only a DESCRIPTION.md, so it is another container
+    and the walk continues through it.
+
+    Stopping at the first SKILL.md on each branch is also what keeps a skill's own
+    references/, scripts/, assets/ and templates/ subtree from contributing a
+    second member — the same reason upstream prunes SKILL_SUPPORT_DIRS only under
+    a directory that already has a SKILL.md.
+
+    Skip rules match section 3's glob exactly, at every level. Symlinks are never
+    followed, so the descent cannot cycle.
+
+    Deliberately iterative, not recursive. Nesting depth here is a property of a
+    directory tree this process did not create, and Python's recursion limit
+    (~1000 frames) is FAR below the depth a filesystem accepts — PATH_MAX allows
+    roughly 2000 levels of two-character segments. A recursive walk raises
+    `RecursionError` on such a tree, which is a hard crash of `sync-skills.py`
+    rather than a finding, and it would disagree with the two surfaces that do
+    resolve it (skillex's `flatten_inventory` and pjangler's `packContainerLeaves`
+    both handle it). `frames` is an explicit stack of partially-consumed child
+    iterators, so it reproduces the recursive pre-order EXACTLY — a container's
+    subtree is emitted in the position the container itself occupied — while the
+    depth it can carry is bounded by the heap instead of the C stack.
+    """
+    leaves = []
+    symlinked = []
+    # Each frame is (prefix, iterator over that directory's sorted children).
+    frames = [("", iter(scan_children(container)))]
+
+    while frames:
+        prefix, children = frames[-1]
+        descended = False
+        for child in children:
+            if child.name.startswith(".") or child.name.startswith("_"):
+                continue
+            relative = f"{prefix}/{child.name}" if prefix else child.name
+            mode = child.stat(follow_symlinks=False).st_mode
+            if stat.S_ISLNK(mode):
+                symlinked.append(relative)
+                continue
+            if not stat.S_ISDIR(mode):
+                continue
+            child_path = Path(child.path)
+            # A symlinked SKILL.md is not a regular file, so the leaf is skipped.
+            if is_regular_file(child_path / "SKILL.md"):
+                leaves.append(relative)
+                continue
+            # Still a container: keep descending. Suspending THIS frame mid-iterator
+            # is what preserves pre-order; the loop resumes it once the child's
+            # subtree is exhausted.
+            frames.append((relative, iter(scan_children(child_path))))
+            descended = True
+            break
+        if not descended:
+            frames.pop()
+
+    return leaves, symlinked
+
+
+def has_flattenable_children(directory):
+    """True when a skill is reachable ANYWHERE under `directory`.
+
+    The discriminator between "a CONTAINER of skills" and "an ordinary directory
+    that happens to sit in the pack root" (docs/, assets/, ...). Used only on the
+    section 3 GLOB path, where a container has to be recognized without a
+    pack.toml to declare it.
+
+    Written in terms of `container_leaves` so the glob's notion of "container" can
+    never drift from what the expansion actually reaches: a directory that
+    qualifies here always contributes at least one member, and one that does not
+    could never have contributed any.
+    """
+    leaves, _ = container_leaves(directory)
+    return bool(leaves)
+
+
+def flatten_pack_inventory(root, name, declared):
+    """Contract section 3b: expand a declared inventory by DESCENT.
+
+    Returns an ordered list of `(projected_name, relative_path)`. The projected
+    name is the LEAF basename; the relative path is where that leaf actually
+    lives, which under flatten is no longer `<root>/<name>` — `apple-notes`
+    resolves to `<root>/apple/apple-notes` and `vllm` to
+    `<root>/mlops/inference/vllm`. The path may be ANY number of segments deep, so
+    every caller has to carry the pair and never rebuild the path from the name.
+
+    Container-level files (Hermes' `DESCRIPTION.md`) are NOT projected, at any
+    level. They stay in the pack and remain part of the sealed payload, because
+    the payload is still "every file under each DECLARED entry" and the container
+    is what was declared. Sealing is completely unaffected by this expansion.
+    """
+    inventory = []
+    seen = {}
+
+    def claim(leaf_name, relative, declared_as_is=False):
+        """Project one leaf.  Returns True when it was actually claimed.
+
+        `declared_as_is` marks the one case where the name was NOT lifted off
+        the filesystem: a declared entry that is already a skill keeps the
+        author's string, exactly as it would without flatten.  It defaults to
+        False so the canonical gate below is the fail-safe direction for any
+        future call site.
+        """
+        if not declared_as_is and not CANONICAL_NAME_PATTERN.match(leaf_name):
+            # Contract 3b.  Flatten is the ONLY place a projected skill name is
+            # lifted straight off the filesystem — without it a pack.toml pack
+            # projects exactly the strings its author typed into
+            # `[freeform].skills`.  `validate_skill_name()` only asks for one
+            # safe path component, which happily admits `-rf`, `--help`, `*`,
+            # and names carrying newlines or tabs; those become argv- and
+            # glob-hostile symlink names in all six CLI skill directories.
+            # Skipped rather than raised so one odd upstream directory cannot
+            # brick a whole pack.  `!r` keeps control characters escaped in the
+            # warning itself.
+            print(
+                f"Warning: pack {name} leaf {leaf_name!r} at {relative} is not a canonical "
+                f"skill name ({CANONICAL_NAME_PATTERN.pattern}); skipping",
+                file=sys.stderr,
+            )
+            return False
+        validate_skill_name(leaf_name)
+        previous = seen.get(leaf_name)
+        if previous is not None:
+            # Ambiguous pack: two leaves would project onto one CLI destination,
+            # and which one won would depend on inventory order. Refuse rather
+            # than silently pick. (Across packs this is fine — section 5
+            # precedence decides — but within ONE pack there is no rule to
+            # apply.)
+            raise ValueError(
+                f"Pack {name} flattens to a duplicate skill name {leaf_name!r}: "
+                f"{root / previous} and {root / relative}"
+            )
+        seen[leaf_name] = relative
+        inventory.append((leaf_name, relative))
+        return True
+
+    for entry_name in declared:
+        container = root / entry_name
+        assert_real_pack_directory(container, f"Pack skill {entry_name}")
+        if is_regular_file(container / "SKILL.md"):
+            # Already a leaf. Taken as-is, exactly as without flatten — the name
+            # is the author's declared string, not a filesystem basename.
+            claim(entry_name, Path(entry_name), declared_as_is=True)
+            continue
+
+        # A CONTAINER. Descend it to ANY depth: the walk stops on each branch at
+        # the first directory carrying a SKILL.md, so a container of containers
+        # (hermes-base's `mlops/`) resolves the way upstream's depth-agnostic
+        # `iter_skill_index_files` does.
+        leaves, symlinked = container_leaves(container)
+        for relative in symlinked:
+            # Defence in depth: `walk_pack_subtree` already refuses symlinks
+            # anywhere in the payload, so a symlinked leaf normally fails
+            # verification before this runs.
+            print(
+                f"Warning: pack {name} member {entry_name}/{relative} is a symlink; skipping",
+                file=sys.stderr,
+            )
+        contributed = 0
+        for relative in leaves:
+            # NAME is the leaf basename; PATH may be any number of segments deep.
+            if claim(
+                relative.rsplit("/", 1)[-1],
+                Path(entry_name).joinpath(*relative.split("/")),
+            ):
+                contributed += 1
+        if contributed == 0:
+            # A container whose ENTIRE subtree yields no PROJECTABLE skill —
+            # either it holds none at all, or every leaf it holds was rejected
+            # by the canonical-name gate.  Reported, never silently dropped.
+            print(
+                f"Warning: pack {name} declared entry {entry_name!r} is a container "
+                f"that contributes no skills",
+                file=sys.stderr,
+            )
+    return inventory
+
+
+def pack_inventory(root, name, declared, flatten):
+    """The projected inventory as ordered `(name, relative_path)` pairs.
+
+    Without flatten a member is `<root>/<name>` exactly as before; with flatten
+    it is the section 3b expansion. Everything downstream — include/exclude,
+    section 6 redundancy, the symlink target — consumes this one shape.
+    """
+    if flatten:
+        return flatten_pack_inventory(root, name, declared)
+    return [(item, Path(item)) for item in declared]
+
+
+def pack_declared_skills(root, metadata, entry, flatten=False):
+    """The full declared inventory (pre-include/exclude).
+
+    Under flatten these are the DECLARED entries, which may be containers rather
+    than skills — the section 3b expansion into projected skill names happens
+    later, in `pack_inventory()`. Keeping the two apart is what leaves sealing
+    untouched: the payload is defined over what is DECLARED.
+    """
     name = entry["name"]
     if metadata is not None:
         pack = metadata.get("pack", {})
@@ -909,7 +1143,14 @@ def pack_declared_skills(root, metadata, entry):
         if not stat.S_ISDIR(mode):
             continue
         if not is_regular_file(Path(child.path) / "SKILL.md"):
-            continue
+            # Section 3 stops here: no SKILL.md, not a skill.  Under flatten a
+            # SKILL.md-less child may instead be a CONTAINER, and skipping it
+            # would make the manifest's `"flatten": true` a no-op for exactly
+            # the pack.toml-less packs it exists to serve.  The extra condition
+            # keeps ordinary directories (docs/, assets/) out of the inventory —
+            # and therefore out of the sealed payload.
+            if not (flatten and has_flattenable_children(Path(child.path))):
+                continue
         declared.append(validate_skill_name(child.name))
     return declared
 
@@ -936,8 +1177,15 @@ def walk_pack_subtree(root, relative_root, files, directories):
     visit(root / relative_root)
 
 
-def pack_payload(root, metadata, declared):
-    """payload = pack.toml + every file under each DECLARED skill directory."""
+def pack_payload(root, metadata, declared, flatten=False):
+    """payload = pack.toml + every file under each DECLARED skill directory.
+
+    UNCHANGED by contract section 3b: declaring a container already covers its
+    leaves recursively, so a flattened pack seals and verifies byte-for-byte the
+    same as before. The one concession is the SKILL.md requirement below — under
+    flatten a declared entry is allowed to be a container, and demanding a
+    SKILL.md at its root would reject the very layout 3b exists to project.
+    """
     files = {}
     directories = set()
     if metadata is not None:
@@ -945,7 +1193,7 @@ def pack_payload(root, metadata, declared):
     for name in declared:
         skill_dir = root / name
         assert_real_pack_directory(skill_dir, f"Pack skill {name}")
-        if not is_regular_file(skill_dir / "SKILL.md"):
+        if not flatten and not is_regular_file(skill_dir / "SKILL.md"):
             raise PackUnavailable(
                 f"Pack skill {name} is missing a regular SKILL.md: {skill_dir}"
             )
@@ -1015,7 +1263,7 @@ def verify_sealed_pack(root, files, directories):
         )
 
 
-def verify_pack(root, metadata, declared, sealed):
+def verify_pack(root, metadata, declared, sealed, flatten=False):
     """Structural validation always; checksum verification when sealed.
 
     A seal is a COMPLETENESS claim: the pack asserts that exactly this payload,
@@ -1027,7 +1275,7 @@ def verify_pack(root, metadata, declared, sealed):
     downgrades to a warning in resolve_pack().
     """
     try:
-        files, directories = pack_payload(root, metadata, declared)
+        files, directories = pack_payload(root, metadata, declared, flatten=flatten)
         if metadata is not None:
             payload_files = metadata.get("source", {}).get("payload_files")
             if isinstance(payload_files, int):
@@ -1074,6 +1322,15 @@ def resolve_pack(
     as the pack's own extent. `declared` is the full inventory before
     include/exclude, so a caller can tell "this pack provides that name" from
     "some other version of this pack does".
+
+    Under flatten (contract 3b) `declared` carries the FLATTENED names, because
+    that is what the pack PROVIDES and section 6 clause (b) asks what a pack
+    provides. The container names it was declared with are an implementation
+    detail of the pack's on-disk layout, and no `skills[]` entry is ever named
+    after one. Section 6 clause (a) is unaffected: a leaf at
+    `<root>/apple/apple-notes` is still contained by `<root>`.
+
+    Returned paths are LEAF paths and are no longer necessarily `<root>/<name>`.
     """
     name = entry["name"]
     optional = bool(entry.get("optional", False))
@@ -1089,7 +1346,8 @@ def resolve_pack(
             managed_roots.add(family_root)
 
         metadata = read_pack_metadata(root)
-        declared = pack_declared_skills(root, metadata, entry)
+        flatten = pack_flatten_enabled(metadata, entry)
+        declared = pack_declared_skills(root, metadata, entry, flatten=flatten)
 
         sealed = bool(entry.get("sealed", False))
         policy = metadata.get("policy", {}) if isinstance(metadata, dict) else {}
@@ -1097,47 +1355,60 @@ def resolve_pack(
             # The manifest may only TIGHTEN: `sealed: false` cannot disable this.
             sealed = True
 
-        verify_pack(root, metadata, declared, sealed)
+        verify_pack(root, metadata, declared, sealed, flatten=flatten)
+        # Expansion runs INSIDE the try, and strictly after verification: an
+        # integrity check must never be gated on how a pack is projected, and a
+        # member that vanished between the two is `optional`-suppressible here
+        # exactly as it is above.
+        inventory = pack_inventory(root, name, declared, flatten)
     except PackUnavailable as error:
         if optional:
             print(f"Warning: optional pack {name} skipped: {error}", file=sys.stderr)
             return []
         raise ValueError(f"Pack {name} could not be resolved: {error}") from error
 
+    provided = [item for item, _relative in inventory]
     if on_resolved is not None:
         on_resolved(
             {
                 "name": name,
                 "root": root,
                 "family_root": family_root,
-                "declared": list(declared),
+                "declared": list(provided),
             }
         )
 
-    members = list(declared)
+    # include/exclude apply AFTER expansion, to the FLATTENED names (contract
+    # 3b): a manifest names the skills it wants, and under flatten a container
+    # name is not one of them.
+    members = list(inventory)
     include = entry.get("include")
     if include is not None:
         wanted = set(include)
-        unknown = sorted(wanted - set(members))
+        unknown = sorted(wanted - set(provided))
         if unknown:
             print(
                 f"Warning: pack {name} include names not in inventory: {unknown}",
                 file=sys.stderr,
             )
-        members = [item for item in members if item in wanted]
+        members = [item for item in members if item[0] in wanted]
     exclude = entry.get("exclude")
     if exclude:
         unwanted = set(exclude)
-        members = [item for item in members if item not in unwanted]
+        members = [item for item in members if item[0] not in unwanted]
 
     print(
         f"pack {name}"
         + (f"@{entry['version']}" if entry.get("version") else "")
         + f" -> {root} "
-        f"({len(members)}/{len(declared)} skill(s), "
-        f"{'sealed' if sealed else 'unsealed'}, via {description})"
+        f"({len(members)}/{len(inventory)} skill(s), "
+        f"{'sealed' if sealed else 'unsealed'}, "
+        + (f"flattened from {len(declared)} declared entries, " if flatten else "")
+        + f"via {description})"
     )
-    return [(validate_skill_name(item), root / item) for item in members]
+    return [
+        (validate_skill_name(item), root / relative) for item, relative in members
+    ]
 
 
 # --------------------------------------------------------------------------- #
