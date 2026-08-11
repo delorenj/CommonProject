@@ -187,7 +187,12 @@ def lexical_symlink_target(link):
     return Path(os.path.normpath(str(lexical)))
 
 
-def preflight_cli_dirs(cli_dirs_base, skill_names, scope="project"):
+def preflight_cli_dirs(
+    cli_dirs_base,
+    skill_names,
+    scope="project",
+    skill_sources=None,
+):
     # Re-validate here rather than trusting the caller: this is the guard that
     # decides where mutations may land, and `expected_cli / ".."` would satisfy
     # the containment check below on its own.
@@ -254,10 +259,20 @@ def preflight_cli_dirs(cli_dirs_base, skill_names, scope="project"):
             # real, hand-authored skill directories.  Never let the fanout
             # rmtree one of those; fail here, before anything is mutated.
             for name in skill_names:
-                if is_real_directory(managed_skills / name):
+                destination = managed_skills / name
+                if not is_real_directory(destination):
+                    continue
+                source = skill_sources.get(name) if skill_sources is not None else None
+                if source is not None and destination.resolve(strict=True) == Path(source).resolve(strict=True):
+                    # A project-local skill may deliberately live in the
+                    # canonical managed directory. Every supported CLI aliases
+                    # this same projection, so the directory is already in its
+                    # final location and must remain real.
+                    continue
+                if skill_sources is not None:
                     raise ValueError(
                         "Refusing to replace a real skill directory in the managed "
-                        f"projection: {managed_skills / name}"
+                        f"projection: {destination}"
                     )
             add_target(managed_skills, managed_expected)
             continue
@@ -1550,6 +1565,16 @@ def fanout_to_cli(
             if symlink_target.parent != real_cli_dir:
                 raise ValueError(f"Skill destination escapes CLI directory: {symlink_target}")
 
+            # A project-local source may already be the exact destination in
+            # the shared `.agents/skills` projection. Preserve that real
+            # directory; replacing it with a self-referential symlink would
+            # destroy the source.
+            if (
+                is_real_directory(symlink_target)
+                and symlink_target.resolve(strict=True) == Path(actual_path).resolve(strict=True)
+            ):
+                continue
+
             # If it's a symlink already pointing to the right place, skip
             if (
                 symlink_target.is_symlink()
@@ -1686,6 +1711,7 @@ def main():
         preflight_base,
         [validate_skill_name(name) for name in skills_to_sync],
         args.scope,
+        skill_sources=skills_to_sync,
     )
 
     fanout_to_cli(

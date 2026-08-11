@@ -2,10 +2,10 @@
 # https://copier.readthedocs.io/
 #
 # Generic base project template. Creates a project skeleton with:
-# - BMAD methodology (pre-initialized)
+# - minimal source inputs for pjangler-owned BMAD lifecycle initialization
 # - Plane project (auto-created in 33god workspace)
 # - mise environment management
-# - CLI coder configs (Claude, Codex, Gemini, etc.)
+# - six supported CLI projections (Claude, Codex, Gemini, Copilot, OpenCode, Kimi)
 
 _min_copier_version: "9.0.0"
 _subdirectory: template
@@ -116,7 +116,7 @@ _exclude:
 _tasks:
   - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
   # Ensure secrets + per-dev agent-hook/skill overrides are ignored (appended after the base ignore).
-  - "printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.kimi-code/\\n.lastagent\\n**/.claude/settings.local.json\\n' >> .gitignore"
+  - "printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.lastagent\\n**/.claude/settings.local.json\\n\\n# PJAN-57: all six generated CLI configurations are durable project state.\\n!.claude/\\n!.claude/**\\n!.codex/\\n!.codex/**\\n!.gemini/\\n!.gemini/**\\n!.copilot/\\n!.copilot/**\\n!.opencode/\\n!.opencode/**\\n!.kimi-code/\\n!.kimi-code/**\\n' >> .gitignore"
   - "ln -sf AGENTS.md CLAUDE.md"
   - "ln -sf AGENTS.md GEMINI.md"
   # Materialize the declared Skillex packs' manifest + symlink topology
