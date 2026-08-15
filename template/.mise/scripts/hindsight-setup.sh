@@ -11,7 +11,7 @@
 # .env untouched. Never prints the secret.
 #
 # Override the 1Password reference if the item path differs:
-#   HINDSIGHT_OP_KEY_REF="op://DeLoSecrets/<item>/<field>" mise run hindsight-setup
+#   HINDSIGHT_OP_KEY_REF="op://DeLoSecrets/<item>/<field>" mise run hindsight:setup
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

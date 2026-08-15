@@ -1,5 +1,5 @@
 {
-  "$comment": "PER-DEV LOCAL OVERRIDES — copy this file to .agents/local.json (gitignored) and edit. Lets you opt out of individual hooks or whole injected agents without touching committed config. Hooks self-skip at RUNTIME via .agents/hooks/lib/hook-guard.sh (so even Claude's committed hooks honor it); codex/hermes injections additionally skip at INSTALL time. Re-run `mise run hooks-sync` (or re-cd into the repo) after editing.",
+  "$comment": "PER-DEV LOCAL OVERRIDES — copy this file to .agents/local.json (gitignored) and edit. Lets you opt out of individual hooks or whole injected agents without touching committed config. Hooks self-skip at RUNTIME via .agents/hooks/lib/hook-guard.sh (so even Claude's committed hooks honor it); codex/hermes injections additionally skip at INSTALL time. Re-run `mise run hooks:sync` (or re-cd into the repo) after editing.",
   "hooks": {
     "$disabled_help": "Hook ids from .agents/hooks/hooks.master.json: skill-check-reminder, hindsight-recall, hindsight-retain, hindsight-session-end. Listed ids are skipped at runtime across ALL agents.",
     "disabled": [],

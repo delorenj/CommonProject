@@ -1,5 +1,5 @@
 {
-  "$comment": "SINGLE SOURCE OF TRUTH for this repo's project-scoped agent hooks. Hand-edit ONLY this file, then run `mise run hooks-sync` (or re-cd into the repo) to regenerate every per-agent config. Generated files are NOT hand-edited. Pattern: the /ssot-fanout skill. See .agents/hooks/README.md.",
+  "$comment": "SINGLE SOURCE OF TRUTH for this repo's project-scoped agent hooks. Hand-edit ONLY this file, then run `mise run hooks:sync` (or re-cd into the repo) to regenerate every per-agent config. Generated files are NOT hand-edited. Pattern: the /ssot-fanout skill. See .agents/hooks/README.md.",
   "version": 1,
   "marker": "project-agent-hooks",
   "hooks": [

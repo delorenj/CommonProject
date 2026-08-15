@@ -39,43 +39,43 @@ script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninsta
 
 [[watch_files]]
 patterns = ["AGENTS.md"]
-task = "link-agentfiles"
+task = "link:agentfiles"
 [[watch_files]]
 patterns = [".agents/skills.json"]
-task = "skills-sync"
+task = "skills:sync"
 {% if agent_hooks_layer %}
 # Re-fan-out the agent hooks whenever the single source of truth changes.
 [[watch_files]]
 patterns = [".agents/hooks/hooks.master.json"]
-task = "hooks-sync"
+task = "hooks:sync"
 {% endif %}
-[tasks.link-agentfiles]
+[tasks."link:agentfiles"]
 description = "Symlink all agent files to AGENTS.md"
 run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh'"
 
-[tasks.skills-sync]
+[tasks."skills:sync"]
 description = "Sync skills from manifest to local CLI dirs"
-depends = ["skills-provision-packs"]
+depends = ["skills:provision:packs"]
 run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project"
 
-[tasks.skills-provision-packs]
+[tasks."skills:provision:packs"]
 description = "Provision every Skillex pack declared in .agents/skills.json"
 run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py'"
 {% if agent_hooks_layer %}
 # --- Project-scoped agent hooks + skill fan-out (see .agents/hooks/README.md) ---
 
-[tasks.hooks-sync]
+[tasks."hooks:sync"]
 description = "Fan out .agents/hooks/hooks.master.json to each agent CLI (claude committed; codex/kimi injected; hermes adapter)"
 run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --install"
 
-[tasks.hooks-check]
+[tasks."hooks:check"]
 description = "Drift gate: verify generated hook configs match hooks.master.json (CI-safe, read-only)"
 run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --check"
 
-[tasks.hooks-uninstall]
+[tasks."hooks:uninstall"]
 description = "Remove per-user agent-hook injections (codex/kimi/hermes)"
 run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall"
 {% endif %}
-[tasks.hindsight-setup]
+[tasks."hindsight:setup"]
 description = "Provision this dev's shared project Hindsight key from 1Password into .env (op read; upserts those two keys, leaves the rest of .env intact)"
 run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/hindsight-setup.sh'"

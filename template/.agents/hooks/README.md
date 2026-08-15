@@ -12,11 +12,11 @@ master writes zero bytes).
 ## TL;DR
 
 ```bash
-mise run hooks-sync          # fan out the master -> claude + codex + hermes
-mise run hooks-check         # drift gate (read-only; used in CI)
-mise run hooks-uninstall     # remove codex + hermes injections
-mise run skills-sync         # sync .agents/skills.json -> local CLI skill dirs
-mise run hindsight-setup     # one-time: pull the shared CAF Hindsight key into .env
+mise run hooks:sync          # fan out the master -> claude + codex + hermes
+mise run hooks:check         # drift gate (read-only; used in CI)
+mise run hooks:uninstall     # remove codex + hermes injections
+mise run skills:sync         # sync .agents/skills.json -> local CLI skill dirs
+mise run hindsight:setup     # one-time: pull the shared CAF Hindsight key into .env
 ```
 
 You normally run nothing — `mise` does it on directory enter/leave (see
@@ -93,10 +93,10 @@ merged in automatically.
 
 - Project-local skills with the same name shadow the global ones.
 - No `defer_to_global` flag or bash cleanup scripts are needed anymore.
-- The manifest is the only hand-edited skill SSOT; run `mise run skills-sync`
+- The manifest is the only hand-edited skill SSOT; run `mise run skills:sync`
   after changing it, or just re-enter the repo.
 
-## Hindsight credentials — `mise run hindsight-setup`
+## Hindsight credentials — `mise run hindsight:setup`
 
 The hooks shell out to `hindsight`, which needs an API key for the self-hosted
 instance. Strategy: **one shared CAF-scoped key in 1Password**. `hindsight-setup`
@@ -105,7 +105,7 @@ gitignored `.env` (mise loads it, env vars outrank `~/.hindsight/config`). Point
 it at the right item if the default ref is wrong:
 
 ```bash
-HINDSIGHT_OP_KEY_REF="op://DeLoSecrets/<item>/<field>" mise run hindsight-setup
+HINDSIGHT_OP_KEY_REF="op://DeLoSecrets/<item>/<field>" mise run hindsight:setup
 ```
 
 Without a key the hooks **no-op gracefully** — recall/retain just do nothing.
@@ -113,10 +113,10 @@ Without a key the hooks **no-op gracefully** — recall/retain just do nothing.
 ## Adding / changing a hook
 
 1. Edit `hooks.master.json`.
-2. `mise run hooks-sync`.
+2. `mise run hooks:sync`.
 3. Commit the master **and** the regenerated `.claude/settings.json` together
    (codex/hermes targets are per-dev/per-deployment, not committed).
-4. CI runs `mise run hooks-check` — fails if the committed Claude settings drift.
+4. CI runs `mise run hooks:check` — fails if the committed Claude settings drift.
 
 ## Files
 

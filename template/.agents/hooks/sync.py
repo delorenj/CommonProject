@@ -515,7 +515,7 @@ def cmd_check(master: dict) -> int:
         current = target.read_text() if target.exists() else None
         if current != desired:
             warn(f"DRIFT: {target.relative_to(REPO_ROOT)} differs from hooks.master.json "
-                 f"(run `mise run hooks-sync`)")
+                 f"(run `mise run hooks:sync`)")
             rc = 1
         else:
             log(f"claude: in sync ({target.relative_to(REPO_ROOT)})")
@@ -538,7 +538,7 @@ def cmd_check(master: dict) -> int:
                 ]
                 if missing:
                     warn(f"DRIFT: codex hooks.json missing {len(missing)} project hook(s) "
-                         f"(run `mise run hooks-sync`)")
+                         f"(run `mise run hooks:sync`)")
                     rc = 1
                 else:
                     log(f"codex: in sync ({ct})")
@@ -558,7 +558,7 @@ def cmd_check(master: dict) -> int:
             missing = [c for c in want_cmds if c not in present]
             if begin not in present or missing:
                 warn(f"DRIFT: kimi config.toml missing the project hooks block "
-                     f"(run `mise run hooks-sync`)")
+                     f"(run `mise run hooks:sync`)")
                 rc = 1
             else:
                 log(f"kimi: in sync ({kt})")
@@ -574,7 +574,7 @@ def cmd_check(master: dict) -> int:
             missing = [c for _ev, c, _t in hermes_commands(master) if c not in present]
             if missing:
                 warn(f"DRIFT: hermes config.yaml missing {len(missing)} adapter hook(s) "
-                     f"(run `mise run hooks-sync`)")
+                     f"(run `mise run hooks:sync`)")
                 rc = 1
             else:
                 log(f"hermes: in sync ({hcfg.relative_to(REPO_ROOT)})")
