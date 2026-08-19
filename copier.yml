@@ -116,7 +116,12 @@ _exclude:
 _tasks:
   - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
   # Ensure secrets + per-dev agent-hook/skill overrides are ignored (appended after the base ignore).
-  - "printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.lastagent\\n**/.claude/settings.local.json\\n\\n# PJAN-57: all six generated CLI configurations are durable project state.\\n!.claude/\\n!.claude/**\\n!.codex/\\n!.codex/**\\n!.gemini/\\n!.gemini/**\\n!.copilot/\\n!.copilot/**\\n!.opencode/\\n!.opencode/**\\n!.kimi-code/\\n!.kimi-code/**\\n' >> .gitignore"
+  # Each CLI root's hand-owned config is durable project state; the skill
+  # projections inside it are not — bmad-method and skills:sync rewrite them
+  # on every run, so they are re-ignored after the un-ignore lines (last
+  # match wins). _bmad/_config/manifest.yaml pins the version that
+  # reproduces them exactly.
+  - "printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.lastagent\\n**/.claude/settings.local.json\\n\\n# Generated CLI configurations are durable project state...\\n!.claude/\\n!.claude/**\\n!.codex/\\n!.codex/**\\n!.gemini/\\n!.gemini/**\\n!.copilot/\\n!.copilot/**\\n!.opencode/\\n!.opencode/**\\n!.kimi-code/\\n!.kimi-code/**\\n# ...but their skill projections are regenerated, so they stay out of the tree.\\n/.agents/skills/\\n.claude/skills/\\n.codex/skills/\\n.gemini/skills/\\n.copilot/skills/\\n.opencode/skills/\\n.kimi-code/skills/\\n' >> .gitignore"
   - "ln -sf AGENTS.md CLAUDE.md"
   - "ln -sf AGENTS.md GEMINI.md"
   # Materialize the declared Skillex packs' manifest + symlink topology
