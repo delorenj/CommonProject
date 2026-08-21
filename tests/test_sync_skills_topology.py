@@ -135,6 +135,30 @@ class SyncSkillsTopologyTests(unittest.TestCase):
         self.assertFalse((codex / "skills").exists())
         self.assertTrue((claude / "skills").is_symlink())
 
+    def test_source_ancestor_cycle_fails_before_any_destination_mutation(self) -> None:
+        """A repo-root skill must never be linked back inside that same repo."""
+        codex = self.project / ".codex"
+        codex.mkdir()
+        claude = self.project / ".claude"
+        claude.mkdir()
+
+        with self.assertRaisesRegex(ValueError, "recursive skill symlink"):
+            SYNC.fanout_to_cli(self.project, {"self-skill": self.project})
+
+        self.assertFalse((codex / "skills").exists())
+        self.assertFalse((claude / "skills").exists())
+
+    def test_catalog_alias_to_repo_root_is_also_rejected(self) -> None:
+        claude = self.project / ".claude"
+        claude.mkdir()
+        catalog_alias = self.root / "catalog-skill"
+        catalog_alias.symlink_to(self.project, target_is_directory=True)
+
+        with self.assertRaisesRegex(ValueError, "recursive skill symlink"):
+            SYNC.fanout_to_cli(self.project, {"self-skill": catalog_alias})
+
+        self.assertFalse((claude / "skills").exists())
+
     def test_parent_swap_after_preflight_cannot_mutate_outside_project(self) -> None:
         codex = self.project / ".codex"
         codex.mkdir()
