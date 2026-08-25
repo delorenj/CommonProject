@@ -114,18 +114,27 @@ _exclude:
 # into the caller's shared per-user CLI configs. Scaffolding must never mutate
 # global state as a side effect — the operator trusts/enters the repo themselves.
 _tasks:
-  - "cp ~/.config/git/ignore .gitignore 2>/dev/null || echo '# Add ignores here' > .gitignore"
+  # PJAN-82: seed the base ignore only when there is nothing to lose. `cp` over
+  # an existing .gitignore silently discarded whatever the repo already had,
+  # every time the template was re-rendered into a live project.
+  - "[ -s .gitignore ] || cp ~/.config/git/ignore .gitignore 2>/dev/null || [ -s .gitignore ] || echo '# Add ignores here' > .gitignore"
   # Ensure secrets + per-dev agent-hook/skill overrides are ignored (appended after the base ignore).
   # Each CLI root's hand-owned config is durable project state; the skill
   # projections inside it are not — bmad-method and skills:sync rewrite them
   # on every run, so they are re-ignored after the un-ignore lines (last
   # match wins). _bmad/_config/manifest.yaml pins the version that
   # reproduces them exactly.
-  - "printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.lastagent\\n**/.claude/settings.local.json\\n\\n# Generated CLI configurations are durable project state...\\n!.claude/\\n!.claude/**\\n!.codex/\\n!.codex/**\\n!.gemini/\\n!.gemini/**\\n!.copilot/\\n!.copilot/**\\n!.opencode/\\n!.opencode/**\\n!.kimi-code/\\n!.kimi-code/**\\n# ...but their skill projections are regenerated, so they stay out of the tree.\\n/.agents/skills/\\n.claude/skills/\\n.codex/skills/\\n.gemini/skills/\\n.copilot/skills/\\n.opencode/skills/\\n.kimi-code/skills/\\n' >> .gitignore"
-  - "ln -sf AGENTS.md CLAUDE.md"
-  - "ln -sf AGENTS.md GEMINI.md"
+  # PJAN-82: appended once (a re-render used to duplicate the whole block), and
+  # the skill patterns carry no trailing slash so a SYMLINKED projection is
+  # ignored too — .gemini/.copilot/.kimi-code get a symlink, not a directory.
+  - "grep -q '^# Generated CLI configurations are durable project state' .gitignore 2>/dev/null || printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.lastagent\\n**/.claude/settings.local.json\\n\\n# Generated CLI configurations are durable project state...\\n!.claude/\\n!.claude/**\\n!.codex/\\n!.codex/**\\n!.gemini/\\n!.gemini/**\\n!.copilot/\\n!.copilot/**\\n!.opencode/\\n!.opencode/**\\n!.kimi-code/\\n!.kimi-code/**\\n# ...but their skill projections are regenerated, so they stay out of the tree.\\n# No trailing slash: some CLIs get a real directory here and some a symlink.\\n/.agents/skills\\n.claude/skills\\n.codex/skills\\n.gemini/skills\\n.copilot/skills\\n.opencode/skills\\n.kimi-code/skills\\n' >> .gitignore"
+  # PJAN-82: use the managed script, which refuses to replace a REAL CLAUDE.md.
+  # `ln -sf` cannot distinguish a stale link it owns from a hand-written file it
+  # must not touch, so a re-render into a live project destroyed the file and
+  # reported success.
+  - "./.mise/scripts/link-agentfiles.sh \"$(pwd)\""
   # Materialize the declared Skillex packs' manifest + symlink topology
   # without copying pack content or disturbing project-specific skills.
-  - "python3 .mise/scripts/provision-packs.py"
+  - "python3 .mise/scripts/provision-packs.py --root \"$(pwd)\""
   # Stamp the repo's absolute path into .project.json (the SOT) post-render.
   - "python3 -c \"import json,os,pathlib; p=pathlib.Path('.project.json'); d=json.loads(p.read_text()); d['repo_path']=os.getcwd(); p.write_text(json.dumps(d,indent=2)+chr(10))\""
