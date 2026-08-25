@@ -119,6 +119,17 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--no-reconcile",
+        action="store_true",
+        help=(
+            "Keep managed projection links this sync did not declare.  By "
+            "default a projection is reconciled: a symlink into a managed "
+            "registry root that no declared skill or pack accounts for is "
+            "removed, because leaving it is what turns a projection into "
+            "sediment (81 of pjangler's 132 links were dangling)."
+        ),
+    )
+    parser.add_argument(
         "--root",
         default=os.environ.get("MISE_CONFIG_ROOT") or None,
         help=(
@@ -1613,12 +1624,59 @@ def handle_retired_dirs(cli_dirs_base, managed_roots, prune=False):
 # --------------------------------------------------------------------------- #
 
 
+def reconcile_projection(real_cli_dir, skills_map, managed_roots):
+    """Remove managed projection links this sync does not account for.
+
+    `fanout_to_cli` only ever added and overwrote. Nothing removed a link, so a
+    projection was a monotonically growing record of every skill the repo ever
+    declared: rename a skill, retire a pack, or move a registry cache and the
+    old link stayed forever, dangling. Measured on the reporting machine: 81 of
+    pjangler's 132 `.claude/skills` links pointed at BMAD pack versions that no
+    longer exist, and a hand-planted broken link -- including one whose name IS
+    a declared entry -- survived a re-run untouched.
+
+    Deliberately narrow. Only a SYMLINK is ever removed, and only when its
+    LEXICAL target (never a resolved one -- resolving a hostile link would walk
+    outside the project first) lies inside a managed registry root. So:
+
+      - a real directory is never touched: that is BMAD's installer output in
+        `<cli>/skills`, or a hand-authored skill in `.agents/skills`;
+      - a link pointing anywhere outside the managed roots is the operator's
+        own and is left alone;
+      - a pack member survives, because `skills_map` already contains every
+        name the declared packs resolved to before fanout runs.
+    """
+    removed = []
+    try:
+        entries = sorted(os.listdir(real_cli_dir))
+    except OSError:
+        return removed
+    for name in entries:
+        if name in skills_map:
+            continue
+        candidate = real_cli_dir / name
+        if not candidate.is_symlink():
+            continue
+        try:
+            target = lexical_symlink_target(candidate)
+        except OSError:
+            continue
+        if not is_inside_managed_root(target, managed_roots):
+            continue
+        state = "dangling" if not candidate.exists() else "undeclared"
+        candidate.unlink()
+        removed.append((candidate, target, state))
+        print(f"✗ {candidate} ({state} -> {target})")
+    return removed
+
 def fanout_to_cli(
     cli_dirs_base,
     skills_map,
     active_cli_dirs=None,
     before_mutation=None,
     scope="project",
+    managed_roots=None,
+    reconcile=True,
 ):
     """
     Creates symlinks in each of the supported CLI skill dirs relative to
@@ -1689,11 +1747,86 @@ def fanout_to_cli(
             linked_total += 1
             print(f"→ {symlink_target} -> {actual_path}")
 
+    removed_total = 0
+    if reconcile and managed_roots:
+        for cli_dir, expected_cli in active_cli_dirs:
+            revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli)
+            removed_total += len(
+                reconcile_projection(
+                    expected_cli.resolve(strict=True), skills_map, managed_roots
+                )
+            )
+
     print(
-        f"sync-skills: {linked_total} new/updated symlink(s) "
+        f"sync-skills: {linked_total} new/updated symlink(s), "
+        f"{removed_total} stale link(s) removed "
         f"across CLIs in {cli_dirs_base}"
     )
 
+
+def report_global_inheritance(global_manifest_path):
+    """Verify that the user scope is reachable; project NOTHING from it.
+
+    `inherit_global: true` used to prepend the whole global manifest as layer 0
+    of a PROJECT run, so every global skill was materialized as a fresh symlink
+    inside every project CLI skill dir -- 38 resolvable global skills x2 present
+    CLI dirs = 76 links per project, re-created on every `cd`.
+
+    That work is dead. Every agent CLI installed on a machine like this one
+    reads the user scope implicitly, and each of its global skill roots is
+    already a single dir-level symlink to ~/.agents/skills:
+
+        ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.copilot/skills
+        ~/.kimi-code/skills ~/.config/opencode/skills ~/.openclaw/skills
+
+    One projection, N aliases -- so a global skill is visible in a project
+    because the CLI inherits the user scope, not because someone copied a link
+    into the repo. A project projection holds only that repo's own declared
+    skills and its declared packs.
+
+    What is left here is the check: if the user-scope alias is missing or points
+    somewhere else, global skills are NOT reachable and the operator should hear
+    about it rather than have this script quietly paper over it with copies.
+    """
+    home = Path(os.path.expanduser("~"))
+    managed = managed_global_skills_dir(home)
+    reachable, broken = [], []
+    for cli_rel_path in cli_skill_dirs("global"):
+        alias = home / cli_rel_path
+        if not alias.exists() and not alias.is_symlink():
+            continue
+        try:
+            if alias.resolve(strict=True) == managed.resolve(strict=True):
+                reachable.append(cli_rel_path)
+                continue
+        except OSError:
+            pass
+        broken.append(cli_rel_path)
+    # This runs from an enter hook on every `cd`, so say nothing when the user
+    # scope is intact. Report only what an operator has to act on.
+    if not broken and reachable:
+        return
+    declared = len(load_manifest(global_manifest_path).get("skills", []))
+    for cli_rel_path in broken:
+        print(
+            f"Warning: ~/{cli_rel_path} does not resolve to {managed}; global "
+            f"skills are not reachable for that CLI.  Fix the alias "
+            f"(ln -sfn {managed} ~/{cli_rel_path}); do not copy links into "
+            f"projects.",
+            file=sys.stderr,
+        )
+    if not reachable:
+        print(
+            f"Warning: no user-scope alias of {managed} was found, so none of "
+            f"the {declared} global skill(s) declared in {global_manifest_path} "
+            f"are reachable from any CLI.",
+            file=sys.stderr,
+        )
+
+
+def managed_global_skills_dir(home):
+    """The single user-scope projection every global CLI root aliases."""
+    return home.joinpath(*MANAGED_SKILLS_RELATIVE)
 
 def manifest_layer(manifest_path):
     manifest = load_manifest(manifest_path)
@@ -1730,8 +1863,7 @@ def main():
         print(f"Loading project manifest from {project_manifest_path}")
         project_layer = manifest_layer(project_manifest_path)
         if project_layer["manifest"].get("inherit_global", False):
-            print("Inheriting global skills...")
-            layers.append(manifest_layer(global_manifest_path))
+            report_global_inheritance(global_manifest_path)
         layers.append(project_layer)
 
     preflight_names = []
@@ -1814,6 +1946,8 @@ def main():
         skills_to_sync,
         active_cli_dirs=active_cli_dirs,
         scope=args.scope,
+        managed_roots=managed_roots,
+        reconcile=not args.no_reconcile,
     )
 
     handle_retired_dirs(preflight_base, managed_roots, prune=args.prune_retired)
