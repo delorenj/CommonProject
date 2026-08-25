@@ -1661,9 +1661,18 @@ def reconcile_projection(real_cli_dir, skills_map, managed_roots):
             target = lexical_symlink_target(candidate)
         except OSError:
             continue
-        if not is_inside_managed_root(target, managed_roots):
+        dangling = not candidate.exists()
+        # A DANGLING link is removed wherever it points. It names a skill and
+        # resolves to nothing, so it cannot be serving anyone, and the managed-root
+        # test would miss exactly the ones that hurt most: the relics of a retired
+        # intermediate hop. `<repo>/.claude/skills/hindsight ->
+        # 33GOD/skills/hindsight` outlived that farm entry and is not inside any
+        # registry root, so it would have rotted here forever. A link that still
+        # resolves is only removed inside a managed root, where this engine is the
+        # only writer.
+        if not dangling and not is_inside_managed_root(target, managed_roots):
             continue
-        state = "dangling" if not candidate.exists() else "undeclared"
+        state = "dangling" if dangling else "undeclared"
         candidate.unlink()
         removed.append((candidate, target, state))
         print(f"✗ {candidate} ({state} -> {target})")
