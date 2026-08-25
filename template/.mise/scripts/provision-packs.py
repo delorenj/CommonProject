@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import argparse
 import os
 import re
 import shutil
@@ -286,13 +287,46 @@ def atomic_write(path: Path, content: bytes, mode: int) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def own_root() -> Path:
+    """The repo this script file belongs to: <root>/.mise/scripts/<this>."""
+    return Path(__file__).resolve().parents[2]
+
+
+def resolved_project_root(requested: str | None) -> Path:
+    """Resolve the repo to provision, refusing to infer it from cwd.
+
+    A mise ENTER hook runs with cwd set to the directory the user cd'd into, not
+    config_root -- including a PARENT config's hook. That is how 33GOD's copy of
+    this script came to force-rewrite `pjangler/.agents/skills.json` and plant 75
+    dangling pack links in `pjangler/.agents/skills`. `mise run <task>` does run
+    at config_root, so the cwd assumption was only ever wrong on the hook path.
+    """
+    mine = own_root()
+    if requested is None:
+        requested = os.environ.get("MISE_CONFIG_ROOT") or None
+    if requested is None:
+        raise SystemExit(
+            "provision-packs: --root (or $MISE_CONFIG_ROOT) is required; "
+            "refusing to infer the subject repo from cwd"
+        )
+    resolved = Path(requested).resolve(strict=True)
+    if resolved != mine:
+        raise SystemExit(
+            f"provision-packs: refusing to act on {resolved}; this script "
+            f"belongs to {mine}.  A nested repo must ship its own "
+            ".mise/scripts copy."
+        )
+    return resolved
+
+
 def provision(
     *,
+    root: str | None = None,
     after_preflight: Callable[[], None] | None = None,
     create_link: Callable[[Path, Path, int], None] | None = None,
     after_apply: Callable[[Path, Path], None] | None = None,
 ) -> int:
-    project_root = Path.cwd().resolve(strict=True)
+    project_root = resolved_project_root(root)
     agents_path = project_root / ".agents"
     skills_path = agents_path / "skills"
     agents_existed = agents_path.exists() or agents_path.is_symlink()
@@ -514,8 +548,18 @@ def provision(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Provision declared Skillex packs.")
+    parser.add_argument(
+        "--root",
+        default=None,
+        help=(
+            "Project root to provision; defaults to $MISE_CONFIG_ROOT.  Never "
+            "cwd -- see resolved_project_root()."
+        ),
+    )
+    args = parser.parse_args()
     try:
-        changed = provision()
+        changed = provision(root=args.root)
     except (FileNotFoundError, OSError, ValueError, RuntimeError, engine.PackUnavailable) as error:
         raise SystemExit(
             f"Skillex pack provisioning failed: {error}; "

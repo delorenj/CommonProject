@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import pathlib
 import re
 import shutil
 import stat
@@ -82,6 +83,23 @@ class PackUnavailable(Exception):
     """
 
 
+# --------------------------------------------------------------------------- #
+# Which repo does this script own?
+#
+# A mise ENTER hook runs with cwd set to the directory the user cd'd into, not
+# to config_root -- and that is true for a PARENT config's hook too, so entering
+# 33GOD/pjangler fired 33GOD's copy of this script with cwd=pjangler. It then
+# loaded pjangler's manifest and rewrote pjangler's .agents/ and CLI skill dirs.
+# `mise run <task>` DOES run at config_root, which is why the cwd assumption
+# looked correct for years: only the enter-hook path was ever wrong.
+#
+# So the subject is taken explicitly, defaulting to $MISE_CONFIG_ROOT (mise
+# exports it per hook, correctly), and it must match the root this script file
+# actually lives in. A repo-local script never acts on cwd, and never on a
+# sibling.
+# --------------------------------------------------------------------------- #
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Sync skills from manifest to agent CLIs."
@@ -100,7 +118,39 @@ def parse_args():
             "directories.  Without this flag they are only reported."
         ),
     )
+    parser.add_argument(
+        "--root",
+        default=os.environ.get("MISE_CONFIG_ROOT") or None,
+        help=(
+            "Project root this sync owns; defaults to $MISE_CONFIG_ROOT.  Never "
+            "cwd: a parent mise config's enter hook runs with cwd set to the "
+            "child directory you entered, so cwd names a sibling repo."
+        ),
+    )
     return parser.parse_args()
+
+
+def own_root():
+    """The repo this script file belongs to: <root>/.mise/scripts/<this>."""
+    return pathlib.Path(__file__).resolve().parents[2]
+
+
+def resolved_project_root(args):
+    mine = own_root()
+    if args.scope != "project":
+        return mine
+    if not args.root:
+        raise SystemExit(
+            "sync-skills: --root (or $MISE_CONFIG_ROOT) is required for "
+            "--scope project; refusing to infer the subject repo from cwd"
+        )
+    requested = pathlib.Path(args.root).resolve(strict=True)
+    if requested != mine:
+        raise SystemExit(
+            f"sync-skills: refusing to act on {requested}; this script belongs "
+            f"to {mine}.  A nested repo must ship its own .mise/scripts copy."
+        )
+    return requested
 
 
 def load_manifest(manifest_path):
@@ -1660,8 +1710,9 @@ def manifest_layer(manifest_path):
 def main():
     args = parse_args()
 
+    project_root = resolved_project_root(args)
     global_manifest_path = Path(os.path.expanduser("~/.agents/skills.json"))
-    project_manifest_path = Path(os.getcwd()) / ".agents" / "skills.json"
+    project_manifest_path = project_root / ".agents" / "skills.json"
 
     # Destination topology is a security boundary.  Validate every active CLI
     # directory before cloning/updating registries, creating caches, or changing
@@ -1675,7 +1726,7 @@ def main():
         print(f"Loading global manifest from {global_manifest_path}")
         layers.append(manifest_layer(global_manifest_path))
     else:
-        preflight_base = Path(os.getcwd())
+        preflight_base = project_root
         print(f"Loading project manifest from {project_manifest_path}")
         project_layer = manifest_layer(project_manifest_path)
         if project_layer["manifest"].get("inherit_global", False):

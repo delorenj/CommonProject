@@ -12,20 +12,26 @@ _.file = [".env"]
 # i.e. All linked agent files MUST be siblings at
 # any given level of nesting.
 #
+# NOTE: every managed script is handed config_root EXPLICITLY. A mise enter
+# hook runs with cwd set to the directory you cd'd into -- including a PARENT
+# config's hook -- so a script that reads its subject from cwd reshapes
+# whichever nested repo you entered. config_root locates the file; the
+# argument locates the subject. The scripts refuse to run without it.
+#
 # NOTE: hooks are an array of [[hooks.enter]] tables (NOT enter = [ ... ]) and
 # every {{config_root}} path is single-quoted so it survives a space in the
 # project path — mise runs each `script` via `sh -c`.
 [[hooks.enter]]
-script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh'"
+script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh' '{% raw %}{{config_root}}{% endraw %}'"
 [[hooks.enter]]
 # Atomic (PJAN-24/PJAN-57): shell complexity lives in the managed script so
 # mise never interpolates temporary variables. The script uses mktemp, traps
 # cleanup, and replaces .env only after op inject succeeds.
 script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/materialize-env.sh'"
 [[hooks.enter]]
-script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py'"
+script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py' --root '{% raw %}{{config_root}}{% endraw %}'"
 [[hooks.enter]]
-script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project"
+script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project --root '{% raw %}{{config_root}}{% endraw %}'"
 [[hooks.enter]]
 script = "[ -f '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' ] && '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' || true"
 {%- if agent_hooks_layer %}
@@ -51,16 +57,16 @@ task = "hooks:sync"
 {% endif %}
 [tasks."link:agentfiles"]
 description = "Symlink all agent files to AGENTS.md"
-run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh'"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh' '{% raw %}{{config_root}}{% endraw %}'"
 
 [tasks."skills:sync"]
 description = "Sync skills from manifest to local CLI dirs"
 depends = ["skills:provision:packs"]
-run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project"
+run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project --root '{% raw %}{{config_root}}{% endraw %}'"
 
 [tasks."skills:provision:packs"]
 description = "Provision every Skillex pack declared in .agents/skills.json"
-run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py'"
+run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py' --root '{% raw %}{{config_root}}{% endraw %}'"
 {% if agent_hooks_layer %}
 # --- Project-scoped agent hooks + skill fan-out (see .agents/hooks/README.md) ---
 
