@@ -421,10 +421,24 @@ def provision(
             )
         except OSError:
             link_targets_pack = False
+        # PJAN-82: a DANGLING symlink here is stale by definition.
+        #
+        # An entry stopped being recognizable as pack-managed the moment its pack
+        # declaration went away: `ownership_roots` no longer contains the pack, so
+        # `link_targets_pack` is false, and the normalized manifest no longer names
+        # it either — so the checks below skipped it and it stayed forever. That is
+        # how momo, bloodbank and candystore each ended up with 76 links into
+        # `~/.agents/.cache/registries/.../packs/bmad/6.10.1-next.31/`, a cache
+        # directory that no longer exists. A link that resolves to nothing cannot be
+        # a hand-authored skill and cannot be serving anyone, so it is reclaimable
+        # regardless of where it points. A link that still RESOLVES is left alone
+        # unless it is provably pack-managed.
+        dangling_link = link_target is not None and not entry.exists()
         if (
             entry.name not in expected
             and entry.name not in managed_manifest_names
             and not link_targets_pack
+            and not dangling_link
         ):
             continue
         target = expected.get(entry.name)
