@@ -813,7 +813,7 @@ def select_pack_version(pack_dir):
     The discriminator is what those children ARE: a child holding a regular
     SKILL.md is a skill, so its parent cannot be a version root.  Contrast
     `packs/bmad/`, also pack.toml-less and also all real directories, but whose
-    children (6.10.1-next.31/, 6.10.2/) hold no top-level SKILL.md -- that IS a
+    children (1.2.0-next.3/, 1.3.0/) hold no top-level SKILL.md -- that IS a
     version layout and the highest version is selected.
 
     `packs/Kurzgesagt/` is NOT an example of this: its twelve children are all
@@ -1367,7 +1367,7 @@ def resolve_pack(
 
         {"name", "root", "family_root", "declared"}
 
-    `root` is the exact pack root (e.g. `packs/bmad/6.10.2`); `family_root` is
+    `root` is the exact pack root (e.g. `packs/bmad/1.3.0`); `family_root` is
     `packs/bmad` when the pack lives under a version directory, else None. The
     two are reported SEPARATELY on purpose: a sibling version under the same
     family root is NOT this pack, so callers must never treat the family root
