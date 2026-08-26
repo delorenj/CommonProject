@@ -1849,6 +1849,54 @@ def manifest_layer(manifest_path):
     }
 
 
+def repo_local_skill_layer(project_root, inherited_names):
+    """Project `<repo>/skills/<name>/SKILL.md` without anyone declaring it.
+
+    "Repo-specific skills live in the repo" is only true if the repo's own
+    skills reach an agent working in it. They did not: pjangler authored
+    `pjangler-dev` and `pjangler-parity-rules` and projected neither into any CLI
+    directory at any scope, so the skills describing how to develop pjangler were
+    invisible to every agent developing pjangler.
+
+    Discovered rather than declared, on purpose. `.agents/skills.json` is
+    generated and gitignored in these repos, so a hand-written entry there does
+    not survive a fresh clone; and a declaration that merely restates the
+    contents of a directory is a second copy of the truth that can drift from the
+    first. A directory holding a SKILL.md IS the declaration.
+
+    A name the GLOBAL scope already provides is skipped: every CLI inherits the
+    user scope implicitly, so projecting it here would be the copy this engine
+    exists to stop making. That is why pjangler gets exactly its two repo-only
+    skills and not the seven it authors for machine-wide use.
+
+    Lowest precedence. A declared pack or an explicit skills[] entry of the same
+    name still wins, because explicit beats discovered.
+    """
+    skills_root = project_root / "skills"
+    if not skills_root.is_dir() or skills_root.is_symlink():
+        return None
+    entries = []
+    for child in sorted(skills_root.iterdir()):
+        if child.name.startswith("."):
+            continue
+        if child.is_symlink() or not child.is_dir():
+            continue
+        if not (child / "SKILL.md").is_file():
+            continue
+        name = validate_skill_name(child.name)
+        if name in inherited_names:
+            continue
+        entries.append({"name": name, "source": child.resolve(strict=True).as_uri()})
+    if not entries:
+        return None
+    print(f"Discovered {len(entries)} repo-local skill(s) in {skills_root}")
+    return {
+        "manifest": {"skills": entries},
+        "packs": [],
+        "base_dir": project_root,
+        "registry": DEFAULT_REGISTRY,
+    }
+
 def main():
     args = parse_args()
 
@@ -1861,7 +1909,9 @@ def main():
     # any skill link so one unsafe/broken symlink produces zero mutation.
     #
     # Precedence, lowest to highest (contract section 5):
-    #   global packs[] -> global skills[] -> project packs[] -> project skills[]
+    #   global packs[] -> global skills[] -> <repo>/skills discovery
+    #     -> project packs[] -> project skills[]
+    # Discovery sits below the project manifest: explicit beats discovered.
     layers = []
     if args.scope == "global":
         preflight_base = Path(os.path.expanduser("~"))
@@ -1871,8 +1921,16 @@ def main():
         preflight_base = project_root
         print(f"Loading project manifest from {project_manifest_path}")
         project_layer = manifest_layer(project_manifest_path)
+        inherited_names = set()
         if project_layer["manifest"].get("inherit_global", False):
             report_global_inheritance(global_manifest_path)
+            inherited_names = {
+                manifest_skill_name(skill)
+                for skill in load_manifest(global_manifest_path).get("skills", [])
+            }
+        discovered = repo_local_skill_layer(project_root, inherited_names)
+        if discovered is not None:
+            layers.append(discovered)
         layers.append(project_layer)
 
     preflight_names = []
