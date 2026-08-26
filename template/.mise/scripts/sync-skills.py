@@ -1624,7 +1624,7 @@ def handle_retired_dirs(cli_dirs_base, managed_roots, prune=False):
 # --------------------------------------------------------------------------- #
 
 
-def reconcile_projection(real_cli_dir, skills_map, managed_roots):
+def reconcile_projection(real_cli_dir, skills_map, managed_roots, project_root=None):
     """Remove managed projection links this sync does not account for.
 
     `fanout_to_cli` only ever added and overwrote. Nothing removed a link, so a
@@ -1670,7 +1670,18 @@ def reconcile_projection(real_cli_dir, skills_map, managed_roots):
         # registry root, so it would have rotted here forever. A link that still
         # resolves is only removed inside a managed root, where this engine is the
         # only writer.
-        if not dangling and not is_inside_managed_root(target, managed_roots):
+        # A live link is removable inside a managed registry root -- and inside the
+        # PROJECT ROOT itself, which is equally this engine's territory. Seven
+        # links in pjangler pointed at `<repo>/skills/<name>` for names the global
+        # scope already provides: leftovers from the era when inherit_global
+        # materialized the whole global manifest into every project. They resolve,
+        # so the managed-root test left them, and they are precisely the duplicate
+        # copy this engine now exists to stop making. A repo's own skill is not
+        # caught by this: discovery puts it in skills_map, so it is declared.
+        own_territory = is_inside_managed_root(target, managed_roots)
+        if not own_territory and project_root is not None:
+            own_territory = is_inside_managed_root(target, {Path(project_root).resolve()})
+        if not dangling and not own_territory:
             continue
         state = "dangling" if dangling else "undeclared"
         candidate.unlink()
@@ -1762,7 +1773,10 @@ def fanout_to_cli(
             revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli)
             removed_total += len(
                 reconcile_projection(
-                    expected_cli.resolve(strict=True), skills_map, managed_roots
+                    expected_cli.resolve(strict=True),
+                    skills_map,
+                    managed_roots,
+                    project_root=cli_dirs_base,
                 )
             )
 
