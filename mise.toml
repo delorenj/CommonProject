@@ -1,6 +1,6 @@
 [env]
 _.file = [".env"]
-_.path = [".mise/scripts"]
+_.path = [".mise/scripts", "agents/hermes/pm"]
 CODEX_HOME = { value = ".codex", path = true }
 
 # This block will handle the linking of 
@@ -9,12 +9,19 @@ CODEX_HOME = { value = ".codex", path = true }
 # TODO: Ensure this works for all levels of nesting.
 # i.e. All linked agent files MUST be siblings at 
 # any given level of nesting.
-[hooks]
-enter = "'{{config_root}}/.mise/scripts/link-agentfiles.sh'"
 
-[[watch_files]]
-patterns = ["AGENTS.md"]
-task = "link:agentfiles"
+# This block will handle the linking of
+# agent files to the main AGENTS.md file.
+#
+# TODO: Ensure this works for all levels of nesting.
+# i.e. All linked agent files MUST be siblings at
+# any given level of nesting.
+[[hooks.enter]]
+script = "'{{config_root}}/.mise/scripts/link-agentfiles.sh' '{{config_root}}'"
+[[hooks.enter]]
+script = "python3 '{{config_root}}/.mise/scripts/provision-packs.py' --root '{{config_root}}'"
+[[hooks.enter]]
+script = "python3 '{{config_root}}/.mise/scripts/sync-skills.py' --scope project --root '{{config_root}}'"
 
 [tasks]
 # Project initialization - creates/links ticket board + runs Copier
@@ -33,6 +40,23 @@ lint-template = { run = "copier lint", description = "Lint the Copier template" 
 # Development
 dev = { run = "echo 'Run: mise run init-project'", description = "Placeholder for project-specific dev" }
 
+[[watch_files]]
+patterns = ["AGENTS.md"]
+task = "link:agentfiles"
+
+[[watch_files]]
+patterns = [".agents/skills.json"]
+task = "skills:sync"
+
 [tasks."link:agentfiles"]
 description = "Symlink all agent files to AGENTS.md"
-run = ".mise/scripts/link-agentfiles.sh"
+run = "'{{config_root}}/.mise/scripts/link-agentfiles.sh' '{{config_root}}'"
+
+[tasks."skills:sync"]
+description = "Sync skills from manifest to local CLI dirs"
+depends = ["skills:provision:packs"]
+run = "python3 '{{config_root}}/.mise/scripts/sync-skills.py' --scope project --root '{{config_root}}'"
+
+[tasks."skills:provision:packs"]
+description = "Provision every Skillex pack declared in .agents/skills.json"
+run = "python3 '{{config_root}}/.mise/scripts/provision-packs.py' --root '{{config_root}}'"
