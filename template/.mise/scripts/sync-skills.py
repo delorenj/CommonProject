@@ -130,6 +130,17 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--reconcile-dry-run",
+        action="store_true",
+        help=(
+            "Print the links reconcile WOULD remove and remove nothing.  Run "
+            "this first against any projection that has never been synced -- "
+            "notably --scope global, whose projection is shared by every CLI "
+            "and every project on the machine.  Suppresses deletions only: "
+            "links are still created and relinked."
+        ),
+    )
+    parser.add_argument(
         "--root",
         default=os.environ.get("MISE_CONFIG_ROOT") or None,
         help=(
@@ -225,6 +236,95 @@ def assert_real_directory_chain(root, target):
         if not current.is_dir():
             raise ValueError(f"Destination parent is not a directory: {current}")
 
+
+def alias_root_exclusions():
+    """Managed roots that may NOT host the projection directory itself.
+
+    `~/.agents/.cache` is a managed root for reconcile purposes, but
+    `sync_registry()` CLONES and PULLS arbitrary remote git repositories into it.
+    A projection living inside one would be rewritten by whoever controls the
+    registry, so the alias may only land in a checkout the operator owns and this
+    engine never fetches into.
+    """
+    return (Path(os.path.expanduser("~/.agents/.cache")),)
+
+
+def canonical_alias_roots():
+    """The roots the single managed-skills alias may resolve into."""
+    excluded = set()
+    for candidate in alias_root_exclusions():
+        try:
+            excluded.add(candidate.resolve(strict=True))
+        except OSError:
+            continue
+    return {root for root in default_managed_roots() if root not in excluded}
+
+
+def assert_safe_resolved_chain(root, resolved):
+    """Every component from `root` down to `resolved` is a real, safe directory.
+
+    Both arguments are already realpath-normalized, so this is a plain lstat walk:
+    no component is a symlink, each is a directory, each is owned by this user,
+    and none is world-writable.
+
+    Group-writability is deliberately ALLOWED. The canonical checkout is 0775
+    under the operator's own primary group, so a "no group-write" rule would
+    refuse the very topology this exists to admit. World-write is what actually
+    hands the path to someone else.
+    """
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"Resolved alias escapes its managed root {root}: {resolved}") from error
+    current = root
+    for part in relative.parts:
+        current = current / part
+        info = current.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raise ValueError(f"Resolved alias chain contains a symlink: {current}")
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError(f"Resolved alias chain component is not a directory: {current}")
+        if uid is not None and info.st_uid != uid:
+            raise ValueError(f"Resolved alias chain component is not owned by this user: {current}")
+        if info.st_mode & stat.S_IWOTH:
+            raise ValueError(f"Resolved alias chain component is world-writable: {current}")
+
+
+def resolve_managed_alias(alias, allowed_roots):
+    """Resolve the ONE admissible symlinked projection, or refuse.
+
+    Every containment assertion in this engine is LEXICAL -- `symlink_target.parent
+    != real_cli_dir`, `assert_destinations_contained`. A lexical guard is sound
+    only over a symlink-free path, which is why `assert_real_directory_chain`
+    refused any symlinked destination outright.
+
+    That refusal made `--scope global` unrunnable, because the canonical topology
+    IS a symlink: `~/.agents/skills -> ~/code/skillex/skill-sets/global`. The
+    relaxation admits exactly that shape and nothing else -- the alias must be a
+    symlink owned by this user that resolves, with no further symlink in the
+    chain, into a managed registry root the operator owns. Callers then address
+    the RESOLVED path for every mutation, so re-pointing the alias mid-run cannot
+    redirect a write.
+    """
+    if not allowed_roots:
+        raise ValueError(f"No managed registry root is available to host {alias}")
+    info = alias.lstat()
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    if uid is not None and info.st_uid != uid:
+        raise ValueError(f"Managed skills alias is not owned by this user: {alias}")
+    resolved = alias.resolve(strict=True)
+    for root in sorted(allowed_roots, key=lambda candidate: len(str(candidate)), reverse=True):
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        assert_safe_resolved_chain(root, resolved)
+        return resolved
+    raise ValueError(
+        f"Managed skills alias does not resolve into a managed registry root: "
+        f"{alias} -> {resolved}"
+    )
 
 def cli_skill_dirs(scope):
     try:
@@ -328,17 +428,35 @@ def preflight_cli_dirs(
             canonical_alias = lexical_symlink_target(cli_dir) == managed_skills
             if not canonical_alias:
                 raise ValueError(f"Refusing symlinked CLI skills directory: {cli_dir}")
-            assert_real_directory_chain(base, managed_skills)
-            if (
-                not managed_skills.exists()
-                or managed_skills.is_symlink()
-                or not managed_skills.is_dir()
-            ):
-                raise ValueError(
-                    f"Managed skills alias target is not a real directory: {managed_skills}"
-                )
+            assert_real_directory_chain(base, managed_skills.parent)
+            # In the canonical Skillex topology the projection directory IS the
+            # registry checkout, reached through a symlink
+            # (`~/.agents/skills -> ~/code/skillex/skill-sets/global`), so
+            # demanding a real directory here made `--scope global` unrunnable on
+            # the only machine that has the topology. Admit exactly that shape
+            # through resolve_managed_alias() and nothing else.
+            if managed_skills.is_symlink():
+                if scope != "global":
+                    # A generated PROJECT always owns a real `.agents/skills` --
+                    # pjangler's TypeScript mirror (projectSkillTopologyIssues in
+                    # src/parity/rules.ts) says so too. Relaxing only the global
+                    # scope keeps every project destination on the strict rule.
+                    raise ValueError(
+                        f"Managed skills alias target is not a real directory: {managed_skills}"
+                    )
+                resolved_alias = resolve_managed_alias(managed_skills, canonical_alias_roots())
+            else:
+                if (
+                    not managed_skills.exists()
+                    or not managed_skills.is_dir()
+                ):
+                    raise ValueError(
+                        f"Managed skills alias target is not a real directory: {managed_skills}"
+                    )
+                assert_real_directory_chain(base, managed_skills)
+                resolved_alias = managed_skills.resolve(strict=True)
             resolved_cli = cli_dir.resolve(strict=True)
-            if resolved_cli != managed_skills.resolve(strict=True):
+            if resolved_cli != resolved_alias:
                 raise ValueError(
                     f"Managed skills alias escapes managed project skills: {cli_dir}"
                 )
@@ -347,7 +465,12 @@ def preflight_cli_dirs(
             # instead would silently drop every `skills[]` entry on a project
             # where every supported CLI is aliased -- `provision-packs.py`
             # only ever materializes pack members.
-            managed_expected = managed_skills.parent.resolve(strict=True) / managed_skills.name
+            # Pin the RESOLVED directory as the expected destination. Every later
+            # mutation then addresses the real path directly instead of
+            # re-traversing the alias, so re-pointing the alias mid-run cannot
+            # redirect a write; revalidate_cli_dir() re-checks it still resolves
+            # here before each one.
+            managed_expected = resolved_alias
             # Containment first, so an escaping name is reported as an escape
             # rather than as whatever it happens to collide with.
             assert_destinations_contained(managed_expected)
@@ -355,7 +478,7 @@ def preflight_cli_dirs(
             # real, hand-authored skill directories.  Never let the fanout
             # rmtree one of those; fail here, before anything is mutated.
             for name in skill_names:
-                destination = managed_skills / name
+                destination = resolved_alias / name
                 if not is_real_directory(destination):
                     continue
                 source = skill_sources.get(name) if skill_sources is not None else None
@@ -391,11 +514,22 @@ def revalidate_cli_dir(cli_dirs_base, cli_dir, expected_cli):
     assert_real_directory_chain(base, cli_dir.parent)
     if cli_dir.parent.is_symlink() or not cli_dir.parent.is_dir():
         raise ValueError(f"Unsafe CLI destination parent after preflight: {cli_dir.parent}")
+    if cli_dir.is_symlink():
+        # Exactly ONE symlinked destination is admissible -- the canonical
+        # managed-skills alias -- and only while it still resolves to the very
+        # directory preflight pinned as `expected_cli`. `expected_cli != cli_dir`
+        # is what tells the global alias (pinned to its RESOLVED target) apart
+        # from a project's real `.agents/skills`, where the two are the same
+        # path; a project destination that turned into a symlink after preflight
+        # therefore still fails here.
+        if cli_dir != managed_skills_dir(base) or expected_cli == cli_dir:
+            raise ValueError(f"CLI skills directory changed to a symlink after preflight: {cli_dir}")
+        if resolve_managed_alias(cli_dir, canonical_alias_roots()) != expected_cli:
+            raise ValueError(f"Managed skills alias re-pointed after preflight: {cli_dir}")
+        return
     current_expected = cli_dir.parent.resolve(strict=True) / cli_dir.name
     if current_expected != expected_cli:
         raise ValueError(f"CLI destination parent changed after preflight: {cli_dir}")
-    if cli_dir.is_symlink():
-        raise ValueError(f"CLI skills directory changed to a symlink after preflight: {cli_dir}")
     if cli_dir.exists():
         if not cli_dir.is_dir() or cli_dir.resolve(strict=True) != expected_cli:
             raise ValueError(f"Unsafe CLI skills directory after preflight: {cli_dir}")
@@ -1624,7 +1758,7 @@ def handle_retired_dirs(cli_dirs_base, managed_roots, prune=False):
 # --------------------------------------------------------------------------- #
 
 
-def reconcile_projection(real_cli_dir, skills_map, managed_roots, project_root=None):
+def reconcile_projection(real_cli_dir, skills_map, managed_roots, project_root=None, apply=True):
     """Remove managed projection links this sync does not account for.
 
     `fanout_to_cli` only ever added and overwrote. Nothing removed a link, so a
@@ -1684,9 +1818,10 @@ def reconcile_projection(real_cli_dir, skills_map, managed_roots, project_root=N
         if not dangling and not own_territory:
             continue
         state = "dangling" if dangling else "undeclared"
-        candidate.unlink()
+        if apply:
+            candidate.unlink()
         removed.append((candidate, target, state))
-        print(f"✗ {candidate} ({state} -> {target})")
+        print(f"{'✗' if apply else 'would remove'} {candidate} ({state} -> {target})")
     return removed
 
 def fanout_to_cli(
@@ -1697,6 +1832,7 @@ def fanout_to_cli(
     scope="project",
     managed_roots=None,
     reconcile=True,
+    reconcile_apply=True,
 ):
     """
     Creates symlinks in each of the supported CLI skill dirs relative to
@@ -1776,14 +1912,22 @@ def fanout_to_cli(
                     expected_cli.resolve(strict=True),
                     skills_map,
                     managed_roots,
-                    project_root=cli_dirs_base,
+                    # `cli_dirs_base` is the REPO at project scope -- and $HOME at
+                    # global scope, where "inside the project root" would mean
+                    # "anywhere under $HOME", i.e. every skill source on the
+                    # machine. That is not a narrow rule, it is no rule: the
+                    # global farm would reclaim every undeclared link it holds.
+                    # Global scope keeps the managed-root test only.
+                    project_root=None if scope == "global" else cli_dirs_base,
+                    apply=reconcile_apply,
                 )
             )
 
     print(
         f"sync-skills: {linked_total} new/updated symlink(s), "
-        f"{removed_total} stale link(s) removed "
-        f"across CLIs in {cli_dirs_base}"
+        f"{removed_total} stale link(s) "
+        + ("removed " if reconcile_apply else "to remove (dry run) ")
+        + f"across CLIs in {cli_dirs_base}"
     )
 
 
@@ -2029,6 +2173,7 @@ def main():
         scope=args.scope,
         managed_roots=managed_roots,
         reconcile=not args.no_reconcile,
+        reconcile_apply=not args.reconcile_dry_run,
     )
 
     handle_retired_dirs(preflight_base, managed_roots, prune=args.prune_retired)
