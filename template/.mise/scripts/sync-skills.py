@@ -653,7 +653,22 @@ def sync_git_skill(name, source, version, cache_dir):
                 )
     else:
         print(f"Cloning git skill {name} to cache...")
-        subprocess.run(["git", "clone", source, str(target_dir)], check=True)
+        clone = subprocess.run(
+            ["git", "clone", source, str(target_dir)], capture_output=True
+        )
+        if clone.returncode != 0:
+            # "I cannot reach it" is not an integrity failure, it is the pack
+            # simply not being installed here -- which is what PackUnavailable
+            # means and what `"optional": true` exists to downgrade. Raising
+            # CalledProcessError instead put a raw Python traceback in front of
+            # every `cd` for anyone without access to a PRIVATE pack repo, and
+            # `optional` could not suppress it because it catches only this class.
+            shutil.rmtree(target_dir, ignore_errors=True)
+            detail = clone.stderr.decode(errors="replace").strip().splitlines()
+            raise PackUnavailable(
+                f"cannot clone {source}: {detail[-1] if detail else 'git clone failed'}"
+                f" (if it is private, check access with `ssh -T git@github.com`)"
+            )
         stamp.parent.mkdir(parents=True, exist_ok=True)
         stamp.touch()
 
@@ -668,16 +683,23 @@ def sync_git_skill(name, source, version, cache_dir):
         )
         if checkout.returncode != 0:
             print(f"Pinned ref {version} not in cache for {name}; fetching...")
-            subprocess.run(
+            fetch = subprocess.run(
                 ["git", "-C", str(target_dir), "fetch", "--tags", "--prune"],
-                check=True,
                 capture_output=True,
             )
-            stamp.parent.mkdir(parents=True, exist_ok=True)
-            stamp.touch()
-            subprocess.run(
-                ["git", "-C", str(target_dir), "checkout", version], check=True
+            if fetch.returncode == 0:
+                stamp.parent.mkdir(parents=True, exist_ok=True)
+                stamp.touch()
+            retry = subprocess.run(
+                ["git", "-C", str(target_dir), "checkout", version],
+                capture_output=True,
             )
+            if retry.returncode != 0:
+                # Same reasoning as the clone above: a ref this checkout does not
+                # have is an availability problem, not a tampered pack.
+                raise PackUnavailable(
+                    f"pack {name} pins {version!r}, which {source} does not provide"
+                )
 
     return target_dir
 
@@ -711,9 +733,15 @@ def resolve_skill_path(
 
     source = skill.get("source", "")
     if source.startswith("git@") or source.startswith("https://"):
-        return name, sync_git_skill(
-            name, source, skill.get("version"), cache_dir
-        )
+        try:
+            return name, sync_git_skill(
+                name, source, skill.get("version"), cache_dir
+            )
+        except PackUnavailable as error:
+            # Every other unreachable source here warns and returns None; a git
+            # one must not be the single case that kills the whole sync.
+            print(f"Warning: Git skill {name} unavailable: {error}", file=sys.stderr)
+            return name, None
     parsed = urlparse(source)
     if parsed.scheme == "file":
         if parsed.netloc not in {"", "localhost"}:
