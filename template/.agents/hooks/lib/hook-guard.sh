@@ -17,6 +17,19 @@ set -uo pipefail
 HOOK_ID="${1:-}"
 shift || true
 
+# A generated project can keep its portable fallback settings in Git while
+# this machine routes the concern centrally. Paused hub concerns remain owned.
+HUB_CONCERN="$HOOK_ID"
+case "$HUB_CONCERN" in
+  skill-check-reminder) HUB_CONCERN=skill-reminder ;;
+  merge-forward-session-rebalance) HUB_CONCERN=merge-forward ;;
+esac
+if [[ "${BB_HOOK_HUB:-}" != "off" && -f "$HOME/.agents/hooks/hub/ownership.py" ]] &&
+   python3 "$HOME/.agents/hooks/hub/ownership.py" "$HUB_CONCERN"; then
+  cat >/dev/null 2>&1 || true
+  exit 0
+fi
+
 # shellcheck source=local-config.sh
 source "$(dirname "${BASH_SOURCE[0]}")/local-config.sh"
 

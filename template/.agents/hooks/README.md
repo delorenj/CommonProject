@@ -29,17 +29,17 @@ You normally run nothing — `mise` does it on directory enter/leave (see
 | **Claude Code** | committed `.claude/settings.json` (`hooks` key, `$CLAUDE_PROJECT_DIR`) | project, committed | nothing to do — every clone gets it |
 | **Codex** | per-user `~/.codex/hooks.json` (absolute-path entries) | per-user, injected | `mise enter` → inject, `mise leave` → remove |
 | **Kimi** | per-user `~/.kimi-code/config.toml` (sentinel `[[hooks]]` block) | per-user, injected | `mise enter` → inject, `mise leave` → remove |
-| **Hermes** | runtime `config.yaml` `hooks:` + `shell-hooks-allowlist.json`, via an **adapter** | per-deployment | `mise enter` merges (idempotent, backed up) |
+| **Hermes** | runtime `config.yaml` `hooks:` + `shell-hooks-allowlist.json`, via an **adapter** | per-deployment | `mise enter` merges owned commands idempotently |
 
 **Kimi** is fully Claude-compatible (identical event names; payload `{prompt}` /
 `{tool_name, tool_input}` on stdin; `shell:true` commands; edit tools `Write`/`Edit`),
 so it **reuses the same guard-wrapped scripts** as Claude/Codex — just injected as a
 sentinel-bounded `[[hooks]]` block in the per-user `config.toml` (timeout in seconds;
-`KIMI_CODE_HOME` respected; backed up to `config.toml.caf-bak`; byte-exact reversible).
+`KIMI_CODE_HOME` respected; only the owned sentinel block is replaced).
 
 Each injection is **surgical & reversible** — `sync.py` only touches entries
-whose command points at this repo's `.agents/hooks/`, backs up before its first
-write (`*.caf-bak`), and an uninstall restores the original data.
+whose command points at this repo's `.agents/hooks/`; foreign settings are preserved.
+No adjacent backups are written.
 
 ## The hooks
 
@@ -136,3 +136,9 @@ Without a key the hooks **no-op gracefully** — recall/retain just do nothing.
 
 `gitmark/` holds standalone git helpers — committed for convenience, **not** part
 of the agent-hook fan-out.
+
+## Central hook ownership
+
+On a machine with an activated Bloodbank hook-hub, `~/.config/33god/hook-hub/ownership.json` identifies the CLI families and concerns that have completed native cutover. Fanout omits those concerns, removes its earlier injected copies, and preserves all foreign commands. Runtime guards also consult the hub ownership helper, so committed project fallback settings cannot double-fire after cutover. A paused central concern remains owned and is not restored by a later project sync.
+
+Without that manifest this template continues to provide standalone project hooks. Codex timeouts are seconds. Claude, Codex, and Kimi use `SessionEnd` for session closure; Hermes uses `on_session_finalize`. Stop/`on_session_end` indicate turn completion.

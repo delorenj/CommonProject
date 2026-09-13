@@ -44,26 +44,26 @@
       "config_target": ".claude/settings.json",
       "base_dir": "$CLAUDE_PROJECT_DIR/.agents/hooks",
       "timeout_unit": "s",
-      "owns_hooks_key": true,
+      "owns_hooks_key": false,
       "lifecycle_events": {
         "user_prompt": "UserPromptSubmit",
         "post_tool": "PostToolUse",
-        "session_end": "Stop"
+        "session_end": "SessionEnd"
       },
-      "notes": "Committed to the repo, so every dev gets these automatically with NO bootstrap. Claude expands $CLAUDE_PROJECT_DIR in hook commands at runtime. sync owns the entire `hooks` key of this file."
+      "notes": "Project hooks remain portable fallbacks. Fanout owns only its canonical command paths and preserves foreign groups. Activated Bloodbank hub concerns are omitted automatically."
     },
     "codex": {
       "enabled": true,
       "dialect": "codex_hooks",
       "config_target": "~/.codex/hooks.json",
       "base_dir": "{repo}/.agents/hooks",
-      "timeout_unit": "ms",
+      "timeout_unit": "s",
       "lifecycle_events": {
         "user_prompt": "UserPromptSubmit",
         "post_tool": "PostToolUse",
-        "session_end": "Stop"
+        "session_end": "SessionEnd"
       },
-      "notes": "Codex has no project-scoped hook file, so sync INJECTS absolute-path entries into the per-user ~/.codex/hooks.json on `mise enter` and REMOVES them on `mise leave`. Idempotent; backs up to ~/.codex/hooks.json.caf-bak before first write. Set CAF_HOOKS_SKIP_CODEX=1 to opt out (e.g. if you already run these hooks globally)."
+      "notes": "Native timeouts are seconds. Fanout replaces only this project hook path and suppresses concerns already owned by the activated hub. SessionEnd is true closure; Stop completes a turn."
     },
     "hermes": {
       "enabled": true,
@@ -75,9 +75,9 @@
       "timeout_s": 5,
       "lifecycle_events": {
         "post_tool": "post_tool_call",
-        "session_end": "on_session_end"
+        "session_end": "on_session_finalize"
       },
-      "notes": "Hermes runs hooks shell=False (argv) with the payload as JSON on stdin and requires commands in shell-hooks-allowlist.json. It has NO user-prompt event, so hindsight-recall is not wired. Instead of the Claude-shaped scripts, Hermes uses the ADAPTER (hermes/hindsight-hook.sh) which translates the Hermes payload and pins the project bank (repo basename) (resolve_bank from the runtime cwd would resolve to the PM submodule). sync merges into the per-deployment runtime config.yaml + allowlist (idempotent, backed up, skipped if the runtime is absent). Disable per-dev via local.json disabled_agents:[\"hermes\"]."
+      "notes": "Standalone project fallback adapter. on_session_finalize is true session closure; on_session_end is a turn. The active central hub owns fleet hooks and suppresses this fallback."
     },
     "kimi": {
       "enabled": true,
@@ -89,9 +89,9 @@
       "lifecycle_events": {
         "user_prompt": "UserPromptSubmit",
         "post_tool": "PostToolUse",
-        "session_end": "Stop"
+        "session_end": "SessionEnd"
       },
-      "notes": "Kimi Code CLI hooks live in the per-user ~/.kimi-code/config.toml (KIMI_CODE_HOME overrides) as a `hooks` array of {event,command,matcher?,timeout}. Kimi is Claude-compatible: identical event names, payload {hook_event_name,session_id,cwd,prompt} / {tool_name,tool_input} on stdin, shell:true commands, timeout in SECONDS, edit tools named Write/Edit. So it reuses the SAME scripts (guard-wrapped) as claude/codex. No project-local config.toml exists, so sync INJECTS a sentinel-bounded [[hooks]] block on enter and removes it on leave (idempotent text-merge, backs up to config.toml.caf-bak). Disable per-dev via local.json disabled_agents:[\"kimi\"]."
+      "notes": "Kimi uses ~/.kimi-code/config.toml (or KIMI_CODE_HOME). Native timeouts are seconds. Sentinel-owned fallback hooks are suppressed automatically when the hub owns each concern."
     }
   }
 }

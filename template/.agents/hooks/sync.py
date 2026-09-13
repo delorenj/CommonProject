@@ -65,6 +65,22 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def hub_owns_hook(hook_id: str, agent: str) -> bool:
+    """An activated central concern must not gain another native owner.
+
+    The manifest is written only after native cutover. Standalone CommonProject
+    consumers without Bloodbank retain the same project hook fallback.
+    """
+    path = Path(os.environ.get("BB_HOOK_OWNERSHIP", Path.home() / ".config/33god/hook-hub/ownership.json"))
+    concern = {"skill-check-reminder": "skill-reminder", "merge-forward-session-rebalance": "merge-forward"}.get(hook_id, hook_id)
+    try:
+        manifest = json.loads(path.read_text())
+        return (manifest.get("version") == 1 and agent in manifest.get("clis", [])
+                and concern in manifest.get("handler_ids", []) and Path(manifest["registry"]).is_file())
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def load_local() -> dict:
     """Per-dev overrides from .agents/local.json (gitignored). Fails open.
 
@@ -111,6 +127,8 @@ def build_event_groups(master: dict, agent_key: str) -> dict:
     order: list[tuple[str, str | None]] = []
 
     for hook in master["hooks"]:
+        if hub_owns_hook(hook["id"], agent_key):
+            continue
         lifecycle = hook["lifecycle"]
         event = ev_map.get(lifecycle)
         if not event:  # this agent doesn't map this lifecycle (e.g. hermes stub)
@@ -140,7 +158,7 @@ def build_event_groups(master: dict, agent_key: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Claude dialect: own the `hooks` key of the committed .claude/settings.json.
+# Claude dialect: own only commands under this project's canonical hook path.
 # --------------------------------------------------------------------------- #
 def render_claude(master: dict) -> dict:
     target = REPO_ROOT / master["agents"]["claude"]["config_target"]
@@ -151,7 +169,14 @@ def render_claude(master: dict) -> dict:
         except json.JSONDecodeError:
             warn(f"{target} is not valid JSON; refusing to overwrite")
             return {"target": target, "changed": False, "error": True}
-    settings["hooks"] = build_event_groups(master, "claude")
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        warn(f"{target} has a non-object hooks key; refusing to overwrite")
+        return {"target": target, "changed": False, "error": True}
+    _strip_caf_hooks(hooks, "$CLAUDE_PROJECT_DIR/.agents/hooks/")
+    _strip_caf_hooks(hooks, f"{REPO_ROOT}/.agents/hooks/")
+    for event, groups in build_event_groups(master, "claude").items():
+        hooks.setdefault(event, []).extend(groups)
     return {"target": target, "settings": settings, "changed": True}
 
 
@@ -192,8 +217,13 @@ def _strip_caf_hooks(hooks_obj: dict, marker: str) -> bool:
     """Remove our hooks from every event; drop emptied groups. Returns changed."""
     changed = False
     for event, groups in list(hooks_obj.items()):
+        if not isinstance(groups, list):
+            continue
         new_groups = []
         for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks", []), list):
+                new_groups.append(group)
+                continue
             kept = [h for h in group.get("hooks", []) if marker not in h.get("command", "")]
             if len(kept) != len(group.get("hooks", [])):
                 changed = True
@@ -246,10 +276,6 @@ def install_codex(master: dict) -> None:
     if target.exists() and target.read_text() == serialized:
         log(f"codex: up to date ({target})")
         return
-    backup = target.with_suffix(target.suffix + ".caf-bak")
-    if target.exists() and not backup.exists():
-        backup.write_text(target.read_text())
-        log(f"codex: backed up -> {backup}")
     target.write_text(serialized)
     log(f"codex: injected project hooks into {target}")
 
@@ -301,6 +327,8 @@ def kimi_block(master: dict) -> str:
     begin, end = _kimi_markers(master)
     lines = [begin]
     for hook in master["hooks"]:
+        if hub_owns_hook(hook["id"], "kimi"):
+            continue
         event = ev.get(hook["lifecycle"])
         if not event:
             continue
@@ -314,6 +342,8 @@ def kimi_block(master: dict) -> str:
         lines.append(f'command = "{cmd}"')  # paths have no quotes/backslashes -> safe TOML string
         lines.append(f"timeout = {timeout}")
         lines.append("")
+    if len(lines) == 1:
+        return ""
     lines.append(end)
     return "\n".join(lines) + "\n"
 
@@ -334,6 +364,12 @@ def install_kimi(master: dict) -> None:
         return
     text = target.read_text() if target.exists() else ""
     body, _ = _strip_kimi_block(text, master)  # work against config minus our block
+    block = kimi_block(master)
+    if not block:
+        if body != text:
+            target.write_text(body)
+            log("kimi: retired project hooks owned by the central hub")
+        return
     # Refuse if a foreign hooks definition exists (would collide with [[hooks]]).
     if re.search(r"(?m)^\s*hooks\s*=\s*\[[^\]]", body) or re.search(r"(?m)^\s*\[\[hooks\]\]", body):
         warn("kimi: existing non-CAF hooks found in config.toml; skipping to avoid a TOML conflict")
@@ -343,14 +379,10 @@ def install_kimi(master: dict) -> None:
         body += "\n"
     # Append "\n" + block (block ends with "\n"); the lone "\n" is what strip removes,
     # so the body above is preserved verbatim on uninstall.
-    new = body + "\n" + kimi_block(master)
+    new = body + "\n" + block
     if text == new:
         log(f"kimi: up to date ({target})")
         return
-    backup = target.with_suffix(target.suffix + ".caf-bak")
-    if target.exists() and not backup.exists():
-        backup.write_text(text)
-        log(f"kimi: backed up -> {backup}")
     target.write_text(new)
     log(f"kimi: injected project hooks into {target}")
 
@@ -381,14 +413,13 @@ def hermes_commands(master: dict) -> list[tuple[str, str, int]]:
     return [
         (event, f"{runner} {event}", timeout)
         for _lifecycle, event in h["lifecycle_events"].items()
+        if any(hook["lifecycle"] == _lifecycle and not hub_owns_hook(hook["id"], "hermes") for hook in master["hooks"])
     ]
 
 
 def _backup_once(path: Path) -> None:
-    backup = path.with_suffix(path.suffix + ".caf-bak")
-    if path.exists() and not backup.exists():
-        backup.write_text(path.read_text())
-        log(f"hermes: backed up -> {backup.name}")
+    # Never copy potentially credential-bearing native settings beside source.
+    pass
 
 
 def _load_yaml(path: Path):
@@ -410,6 +441,9 @@ def install_hermes(master: dict) -> None:
         return
     marker = codex_marker()
     cmds = hermes_commands(master)
+    if not cmds:
+        uninstall_hermes(master)
+        return
 
     # --- config.yaml hooks block ---
     try:
@@ -419,13 +453,22 @@ def install_hermes(master: dict) -> None:
         return
     hooks = data.setdefault("hooks", {})
     cfg_changed = False
+    desired_pairs = {(event, command) for event, command, _ in cmds}
+    for event, entries in list(hooks.items()):
+        if not isinstance(entries, list):
+            continue
+        kept = [entry for entry in entries if marker not in entry.get("command", "")
+                or (event, entry.get("command")) in desired_pairs]
+        if kept != entries:
+            hooks[event] = kept
+            cfg_changed = True
     for event, command, timeout in cmds:
         entries = hooks.setdefault(event, [])
         ours = [e for e in entries if marker in e.get("command", "")]
         if not ours:
             entries.append({"command": command, "timeout": timeout})
             cfg_changed = True
-        elif ours[0].get("command") != command:  # drifted -> refresh
+        elif ours[0].get("command") != command or ours[0].get("timeout") != timeout:
             ours[0]["command"] = command
             ours[0]["timeout"] = timeout
             cfg_changed = True
@@ -439,6 +482,11 @@ def install_hermes(master: dict) -> None:
             allow_data = {"approvals": []}
     approvals = allow_data.setdefault("approvals", [])
     allow_changed = False
+    kept_approvals = [approval for approval in approvals if marker not in approval.get("command", "")
+                      or (approval.get("event"), approval.get("command")) in desired_pairs]
+    if kept_approvals != approvals:
+        approvals = allow_data["approvals"] = kept_approvals
+        allow_changed = True
     for event, command, _timeout in cmds:
         if not any(a.get("command") == command and a.get("event") == event for a in approvals):
             approvals.append({
@@ -554,9 +602,10 @@ def cmd_check(master: dict) -> int:
                 f"{base}/lib/hook-guard.sh {h['id']} {base}/{h['script']}"
                 for h in master["hooks"]
                 if master["agents"]["kimi"]["lifecycle_events"].get(h["lifecycle"])
+                and not hub_owns_hook(h["id"], "kimi")
             ]
             missing = [c for c in want_cmds if c not in present]
-            if begin not in present or missing:
+            if (want_cmds and (begin not in present or missing)) or (not want_cmds and begin in present):
                 warn(f"DRIFT: kimi config.toml missing the project hooks block "
                      f"(run `mise run hooks:sync`)")
                 rc = 1

@@ -4,7 +4,7 @@
 # Hermes fires shell hooks with the payload piped as JSON on stdin:
 #   {"hook_event_name","tool_name","tool_input","session_id","cwd","extra"}
 # and runs the command shell=False (argv), so this is invoked as:
-#   hindsight-hook.sh <on_session_end|post_tool_call>
+#   hindsight-hook.sh <on_session_finalize|post_tool_call>
 #
 # Why an adapter (not the Claude hindsight scripts verbatim):
 #   - Hermes has NO user-prompt event, so recall has no attach point here.
@@ -16,6 +16,16 @@
 set -uo pipefail
 
 EVENT="${1:-}"
+HUB_CONCERN=""
+case "$EVENT" in
+  post_tool_call) HUB_CONCERN=hindsight-retain ;;
+  on_session_finalize) HUB_CONCERN=hindsight-session-end ;;
+esac
+if [[ -n "$HUB_CONCERN" && "${BB_HOOK_HUB:-}" != "off" && -f "$HOME/.agents/hooks/hub/ownership.py" ]] &&
+   python3 "$HOME/.agents/hooks/hub/ownership.py" "$HUB_CONCERN" --cli hermes; then
+  cat >/dev/null 2>&1 || true
+  exit 0
+fi
 HERMES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .agents/hooks/hermes
 REPO_ROOT="$(cd "${HERMES_DIR}/../../.." && pwd)"            # the project repo (NOT the PM submodule)
 
@@ -50,7 +60,7 @@ case "$EVENT" in
     snippet=$(printf '%s' "$content" | head -3 | tr '\n' ' ' | cut -c1-200)
     retain_detached "code-edit" "Hermes ${tool} edited ${path:-<no-path>}: ${snippet}"
     ;;
-  on_session_end)
+  on_session_finalize)
     hook_disabled "hindsight-session-end" && exit 0
     sid=$(jq -r '.session_id // "unknown"' <<<"$INPUT" 2>/dev/null || echo unknown)
     retain_detached "session-summary" "Hermes PM session ${sid} ended at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
