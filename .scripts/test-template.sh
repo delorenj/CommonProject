@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="$(dirname "$SCRIPT_DIR")"
 OUT_ROOT="${OUT_ROOT:-/tmp/copier-template-test}"
 OUT="$OUT_ROOT/render"
+FAKE_HOME="$OUT_ROOT/home"
 VCS_REF="${TEMPLATE_VCS_REF:-HEAD}"
 
 if ! command -v copier &>/dev/null; then
@@ -16,10 +17,13 @@ if ! command -v copier &>/dev/null; then
 fi
 
 rm -rf "$OUT_ROOT"
-mkdir -p "$OUT_ROOT"
+mkdir -p "$FAKE_HOME/.config/git"
+printf '%s\n' 'THIS-MACHINE-GLOBAL-RULE-MUST-NOT-BE-COPIED' > "$FAKE_HOME/.config/git/ignore"
+mkdir -p "$OUT"
+printf '%s\n' '# Existing project rule' 'project-cache/' > "$OUT/.gitignore"
 
 echo "Rendering template (vcs-ref=$VCS_REF) → $OUT"
-copier copy \
+HOME="$FAKE_HOME" copier copy \
     --trust \
     --defaults \
     --vcs-ref="$VCS_REF" \
@@ -33,6 +37,7 @@ assert_exec()    { [ -x "$1" ] || { echo "✗ not executable: $1"; fail=1; }; }
 assert_symlink() { [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ] || { echo "✗ $1 should symlink to $2"; fail=1; }; }
 assert_dir()     { [ -d "$1" ] || { echo "✗ missing dir: $1"; fail=1; }; }
 assert_grep()    { grep -q "$2" "$1" || { echo "✗ $1 should contain: $2"; fail=1; }; }
+assert_not_grep(){ ! grep -q "$2" "$1" || { echo "✗ $1 should not contain: $2"; fail=1; }; }
 
 # Rendered files
 assert_file    "$OUT/AGENTS.md"
@@ -41,6 +46,12 @@ assert_file    "$OUT/.project.json"
 
 # Post-gen tasks (copier _tasks)
 assert_file    "$OUT/.gitignore"
+assert_grep    "$OUT/.gitignore" '^project-cache/$'
+assert_grep    "$OUT/.gitignore" '^# CommonProject repository contract$'
+assert_grep    "$OUT/.gitignore" '^/.agents/skills$'
+assert_grep    "$OUT/.gitignore" '^!.env.op$'
+assert_not_grep "$OUT/.gitignore" 'THIS-MACHINE-GLOBAL-RULE-MUST-NOT-BE-COPIED'
+assert_not_grep "$OUT/.gitignore" '^!.claude/'
 assert_symlink "$OUT/CLAUDE.md" "AGENTS.md"
 assert_symlink "$OUT/GEMINI.md" "AGENTS.md"
 

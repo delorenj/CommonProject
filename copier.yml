@@ -114,20 +114,12 @@ _exclude:
 # into the caller's shared per-user CLI configs. Scaffolding must never mutate
 # global state as a side effect — the operator trusts/enters the repo themselves.
 _tasks:
-  # PJAN-82: seed the base ignore only when there is nothing to lose. `cp` over
-  # an existing .gitignore silently discarded whatever the repo already had,
-  # every time the template was re-rendered into a live project.
-  - "[ -s .gitignore ] || cp ~/.config/git/ignore .gitignore 2>/dev/null || [ -s .gitignore ] || echo '# Add ignores here' > .gitignore"
-  # Ensure secrets + per-dev agent-hook/skill overrides are ignored (appended after the base ignore).
-  # Each CLI root's hand-owned config is durable project state; the skill
-  # projections inside it are not — bmad-method and skills:sync rewrite them
-  # on every run, so they are re-ignored after the un-ignore lines (last
-  # match wins). _bmad/_config/manifest.yaml pins the version that
-  # reproduces them exactly.
-  # PJAN-82: appended once (a re-render used to duplicate the whole block), and
-  # the skill patterns carry no trailing slash so a SYMLINKED projection is
-  # ignored too — .gemini/.copilot/.kimi-code get a symlink, not a directory.
-  - "grep -q '^# Generated CLI configurations are durable project state' .gitignore 2>/dev/null || printf '\\n# Secrets + per-dev agent-hook/skill overrides (see .agents/local.example.json)\\n.env\\n.env.*\\n!.env.op\\n.agents/local.json\\n.lastagent\\n**/.claude/settings.local.json\\n\\n# Generated CLI configurations are durable project state...\\n!.claude/\\n!.claude/**\\n!.codex/\\n!.codex/**\\n!.gemini/\\n!.gemini/**\\n!.copilot/\\n!.copilot/**\\n!.opencode/\\n!.opencode/**\\n!.kimi-code/\\n!.kimi-code/**\\n# ...but their skill projections are regenerated, so they stay out of the tree.\\n# No trailing slash: some CLIs get a real directory here and some a symlink.\\n/.agents/skills\\n.claude/skills\\n.codex/skills\\n.gemini/skills\\n.copilot/skills\\n.opencode/skills\\n.kimi-code/skills\\n' >> .gitignore"
+  # A repository ignore file is a portable project contract, never a snapshot
+  # of one developer's core.excludesFile. Preserve existing content byte-for-
+  # byte and append only the small CommonProject-owned contract when absent.
+  # Machine-local backup/editor/CLI exclusions belong in the user's global
+  # ignore; `.agents/` is the sole canonical agent-config tree in Git.
+  - "touch .gitignore; if [ -s .gitignore ] && [ -n \"$(tail -c 1 .gitignore)\" ]; then printf '\\n' >> .gitignore; fi; grep -Fqx '# CommonProject repository contract' .gitignore 2>/dev/null || printf '%s\\n' '# CommonProject repository contract' >> .gitignore; for pattern in '.env' '.env.*' '!.env.op' '/.agents/local.json' '/.agents/skills'; do grep -Fqx -- \"$pattern\" .gitignore 2>/dev/null || printf '%s\\n' \"$pattern\" >> .gitignore; done"
   # PJAN-82: use the managed script, which refuses to replace a REAL CLAUDE.md.
   # `ln -sf` cannot distinguish a stale link it owns from a hand-written file it
   # must not touch, so a re-render into a live project destroyed the file and

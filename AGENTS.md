@@ -40,12 +40,14 @@ Root-level files describe the template itself. Files in `template/` are what Cop
 Only two questions asked: `project_name` and `project_description`. Everything else is derived or automated:
 - `project_slug` derived from project_name
 - Plane project created via API in post-generation task
-- .gitignore copied from ~/.config/git/ignore
+- `.gitignore` gets only the portable CommonProject contract; the developer's
+  global Git ignore is never copied into a repository
 
 ### Post-Generation Tasks (copier.yml `_tasks`)
 
 After rendering, Copier automatically:
-1. Copies .gitignore from ~/.config/git/ignore
+1. Preserves any existing `.gitignore` and adds only the repo-owned secret and
+   `.agents` projection rules
 2. Makes scripts executable
 3. Runs setup-plane.py (creates Plane project, writes the ticket_provider block in .project.json)
 4. Leaves lifecycle audit and Git initialization to pjangler
@@ -55,7 +57,8 @@ After rendering, Copier automatically:
 CommonProject does not vendor installer-generated BMAD output. The pjangler
 lifecycle installs BMAD after Copier rendering with exactly the six supported
 tools: Claude, Codex, Gemini, Copilot, OpenCode, and Kimi. It then audits the
-result before initializing Git.
+result before initializing Git. Those client-specific directories are local
+generated projections; `.agents/` is the only canonical agent-config tree.
 
 ## Development Workflow
 
