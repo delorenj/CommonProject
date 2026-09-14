@@ -29,10 +29,6 @@ script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh
 # cleanup, and replaces .env only after op inject succeeds.
 script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/materialize-env.sh'"
 [[hooks.enter]]
-script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py' --root '{% raw %}{{config_root}}{% endraw %}'"
-[[hooks.enter]]
-script = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project --root '{% raw %}{{config_root}}{% endraw %}'"
-[[hooks.enter]]
 script = "[ -f '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' ] && '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' || true"
 {%- if agent_hooks_layer %}
 [[hooks.enter]]
@@ -46,9 +42,6 @@ script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninsta
 [[watch_files]]
 patterns = ["AGENTS.md"]
 task = "link:agentfiles"
-[[watch_files]]
-patterns = [".agents/skills.json"]
-task = "skills:sync"
 {% if agent_hooks_layer %}
 # Re-fan-out the agent hooks whenever the single source of truth changes.
 [[watch_files]]
@@ -60,15 +53,11 @@ description = "Symlink all agent files to AGENTS.md"
 run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh' '{% raw %}{{config_root}}{% endraw %}'"
 
 [tasks."skills:sync"]
-description = "Sync skills from manifest to local CLI dirs"
-depends = ["skills:provision:packs"]
-run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/sync-skills.py' --scope project --root '{% raw %}{{config_root}}{% endraw %}'"
-
-[tasks."skills:provision:packs"]
-description = "Provision every Skillex pack declared in .agents/skills.json"
-run = "python3 '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/provision-packs.py' --root '{% raw %}{{config_root}}{% endraw %}'"
+description = "Apply this project's declared skills with Skillex"
+tools = { "npm:@delorenj/skillex" = "0.1.1" }
+run = "skillex sync --scope project --project '{% raw %}{{config_root}}{% endraw %}'"
 {% if agent_hooks_layer %}
-# --- Project-scoped agent hooks + skill fan-out (see .agents/hooks/README.md) ---
+# --- Project-scoped agent hooks (see .agents/hooks/README.md) ---
 
 [tasks."hooks:sync"]
 description = "Fan out .agents/hooks/hooks.master.json to each agent CLI (claude committed; codex/kimi injected; hermes adapter)"

@@ -48,9 +48,15 @@ Only two questions asked: `project_name` and `project_description`. Everything e
 After rendering, Copier automatically:
 1. Preserves any existing `.gitignore` and adds only the repo-owned secret and
    `.agents` projection rules
-2. Makes scripts executable
-3. Runs setup-plane.py (creates Plane project, writes the ticket_provider block in .project.json)
-4. Leaves lifecycle audit and Git initialization to pjangler
+2. Links agent instruction files without replacing real project-owned files
+3. Explicitly runs the pinned Skillex `skills:sync` task for the rendered
+   project, preserving an existing `.agents/skills.json`
+4. Stamps the project path and leaves lifecycle audit, board setup, and Git
+   initialization to pjangler
+
+Skill activation is an explicit task, never an enter hook or file watcher.
+The npm package owns resolution and reconciliation; do not restore copied
+Python skill engines or add a second template-side resolver.
 
 ### BMAD System
 
@@ -65,7 +71,7 @@ generated projections; `.agents/` is the only canonical agent-config tree.
 ### Testing Template Changes
 
 ```bash
-copier copy . /tmp/test-project --overwrite
+bash .scripts/test-template.sh
 ```
 
 ### What Belongs in This Repo

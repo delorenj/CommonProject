@@ -79,7 +79,7 @@ primary_language:
   default: python
   when: false
 
-# Whether to scaffold the project-scoped agent-hooks + skill fan-out layer
+# Whether to scaffold the project-scoped agent-hooks layer
 # (.agents/hooks + the mise enter/leave wiring that injects into each agent CLI's
 # per-user config). Defaults true so a bare `copier copy` still gets it. pjangler
 # passes `--data agent_hooks_layer=false` when the machine already runs a GLOBAL
@@ -91,7 +91,7 @@ agent_hooks_layer:
   when: false
 
 # When agent_hooks_layer is false, omit only the project-scoped hook tree. The
-# skills manifest stays — sync-skills.py writes project-local CLI dirs and is safe
+# skills manifest stays — Skillex writes project-local CLI dirs and is safe
 # even on machines that already run a global ~/.agents/hooks install.
 # The `.copier-noop-never-matches` sentinel keeps every pattern non-empty when the
 # layer is enabled, which copier requires.
@@ -106,6 +106,11 @@ _exclude:
   - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/hooks{% endif %}"
   - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/hooks/**{% endif %}"
   - "{% if agent_hooks_layer %}.copier-noop-never-matches{% else %}.agents/local.example.json{% endif %}"
+
+_skip_if_exists:
+  # Selection is project intent, not generated output. A refresh must preserve
+  # inheritance choices, exclusions, and active packs byte-for-byte.
+  - ".agents/skills.json"
 
 # --- Post-generation tasks ---
 #
@@ -125,8 +130,8 @@ _tasks:
   # must not touch, so a re-render into a live project destroyed the file and
   # reported success.
   - "./.mise/scripts/link-agentfiles.sh \"$(pwd)\""
-  # Materialize the declared Skillex packs' manifest + symlink topology
-  # without copying pack content or disturbing project-specific skills.
-  - "python3 .mise/scripts/provision-packs.py --root \"$(pwd)\""
+  # One explicit project activation after rendering. Trust only this generated
+  # config for this process; do not persist trust or execute enter/watch hooks.
+  - "MISE_TRUSTED_CONFIG_PATHS=\"$(pwd)/mise.toml\" mise run skills:sync"
   # Stamp the repo's absolute path into .project.json (the SOT) post-render.
   - "python3 -c \"import json,os,pathlib; p=pathlib.Path('.project.json'); d=json.loads(p.read_text()); d['repo_path']=os.getcwd(); p.write_text(json.dumps(d,indent=2)+chr(10))\""

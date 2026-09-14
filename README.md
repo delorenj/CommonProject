@@ -74,6 +74,33 @@ copier copy /path/to/CommonProject my-new-project
 # Project will be generated in ./my-new-project/
 ```
 
+## Skills
+
+Install mise and Node.js 24 or newer. The generated project has one explicit
+`mise run skills:sync` task, pinned to `npm:@delorenj/skillex@0.1.1`. It passes
+`--scope project --project '{{config_root}}'`, including when invoked from a
+nested directory. Global selections may be inherited, but this task writes only
+the selected project and Skillex's private XDG receipt state.
+
+Copier runs that task once after rendering. It grants process-local trust to the
+rendered config; it does not persist mise trust or run enter/watch hooks.
+Configure a canonical Skillex registry first, for example with
+`PJ_SKILLS_REGISTRY_ROOT=/path/to/skillex`. A missing registry or invalid selection
+fails bootstrap with Skillex's actionable finding instead of silently skipping
+activation. The template never clones or copies an alternative skill engine.
+
+Edit `.agents/skills.json` and run the task to apply later selection changes.
+Copier refresh preserves existing manifest bytes, including inheritance,
+exclusions, and an active pack. Skillex preserves foreign/BMAD content and refuses
+conflicting roots; use `skillex migrate` explicitly for legacy layouts. Unrelated
+agent hooks remain independently configured.
+
+For template acceptance, install Copier and pytest, then run
+`bash .scripts/test-template.sh`. Tests render current tracked template bytes in
+canonical `/tmp` fixtures and install the pinned npm release. Before publication,
+set `SKILLEX_TEST_TARBALL=/absolute/path/delorenj-skillex-0.1.1.tgz` to test a
+prebuilt release candidate without rebuilding or depending on a source checkout.
+
 ## Template Questions
 
 The template asks for:
