@@ -6,7 +6,7 @@
 {
   "project_name": {{ project_name | tojson }},
   "project_description": {{ project_description | tojson }},
-  "project_slug": {{ project_slug | tojson }},
+  "project_id": {{ project_slug | lower | tojson }},
   "repo_path": "",
   "ticket_provider": {
     "type": {{ ticket_provider | tojson }},
