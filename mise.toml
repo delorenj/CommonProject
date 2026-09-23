@@ -17,7 +17,7 @@ CODEX_HOME = { value = ".codex", path = true }
 # i.e. All linked agent files MUST be siblings at
 # any given level of nesting.
 [[hooks.enter]]
-script = "'{{config_root}}/.mise/scripts/link-agentfiles.sh' '{{config_root}}'"
+run = "'{{config_root}}/.mise/scripts/link-agentfiles.sh' '{{config_root}}'"
 
 [tasks]
 # Project initialization - creates/links ticket board + runs Copier
@@ -45,6 +45,6 @@ description = "Symlink all agent files to AGENTS.md"
 run = "'{{config_root}}/.mise/scripts/link-agentfiles.sh' '{{config_root}}'"
 
 [tasks."skills:sync"]
-description = "Apply this project's declared skills with Skillex"
-tools = { "npm:@delorenj/skillex" = "0.1.1" }
+description = "Reconcile this project's selected skills"
+tools = { "npm:@delorenj/skillex" = { version = "0.1.1", allow_low_downloads = true }, node = "24" }
 run = "skillex sync --scope project --project '{{config_root}}'"

@@ -20,23 +20,24 @@ _.file = [".env"]
 #
 # NOTE: hooks are an array of [[hooks.enter]] tables (NOT enter = [ ... ]) and
 # every {{config_root}} path is single-quoted so it survives a space in the
-# project path — mise runs each `script` via `sh -c`.
+# project path — mise runs each `run` via `sh -c`. (`run`, not `script`: mise
+# deprecated `script` for spawned hook commands and removes it in 2027.3.0.)
 [[hooks.enter]]
-script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh' '{% raw %}{{config_root}}{% endraw %}'"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh' '{% raw %}{{config_root}}{% endraw %}'"
 [[hooks.enter]]
 # Atomic (PJAN-24/PJAN-57): shell complexity lives in the managed script so
 # mise never interpolates temporary variables. The script uses mktemp, traps
 # cleanup, and replaces .env only after op inject succeeds.
-script = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/materialize-env.sh'"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/materialize-env.sh'"
 [[hooks.enter]]
-script = "[ -f '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' ] && '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' || true"
+run = "[ -f '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' ] && '{% raw %}{{config_root}}{% endraw %}/.mise/scripts/codegraph.sh' || true"
 {%- if agent_hooks_layer %}
 [[hooks.enter]]
-script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --install --quiet"
+run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --install --quiet"
 {%- endif %}
 {%- if agent_hooks_layer %}
 [[hooks.leave]]
-script = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall --quiet"
+run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall --quiet"
 {%- endif %}
 
 [[watch_files]]
@@ -53,8 +54,8 @@ description = "Symlink all agent files to AGENTS.md"
 run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh' '{% raw %}{{config_root}}{% endraw %}'"
 
 [tasks."skills:sync"]
-description = "Apply this project's declared skills with Skillex"
-tools = { "npm:@delorenj/skillex" = "0.1.1" }
+description = "Reconcile this project's selected skills"
+tools = { "npm:@delorenj/skillex" = { version = "0.1.1", allow_low_downloads = true }, node = "24" }
 run = "skillex sync --scope project --project '{% raw %}{{config_root}}{% endraw %}'"
 {% if agent_hooks_layer %}
 # --- Project-scoped agent hooks (see .agents/hooks/README.md) ---

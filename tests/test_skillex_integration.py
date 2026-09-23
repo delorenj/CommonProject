@@ -211,16 +211,26 @@ def assert_task(config):
     tasks = config["tasks"]
     assert [name for name in tasks if name.startswith("skills:")] == ["skills:sync"]
     task = tasks["skills:sync"]
-    assert task["tools"] == {"npm:@delorenj/skillex": VERSION}
+    # allow_low_downloads approves this exact version past mise's npm
+    # minimumPackageAge gate; the plain string pin is refused by mise 2026.9.
+    assert task["tools"] == {
+        "npm:@delorenj/skillex": {"version": VERSION, "allow_low_downloads": True},
+        "node": "24",
+    }
+    assert task["description"] == "Reconcile this project's selected skills"
     assert task["run"] == "skillex sync --scope project --project '{{config_root}}'"
     assert not task.get("depends")
     assert all(
         watch.get("task") != "skills:sync" for watch in config.get("watch_files", [])
     )
+    # Spawned hook commands are `run`: mise deprecated `script` for them and
+    # removes it in 2027.3.0.
+    for kind in ("enter", "leave"):
+        assert all("script" not in hook for hook in config["hooks"].get(kind, []))
     assert all(
-        "skillex" not in hook["script"]
-        and "sync-skills" not in hook["script"]
-        and "provision-packs" not in hook["script"]
+        "skillex" not in hook["run"]
+        and "sync-skills" not in hook["run"]
+        and "provision-packs" not in hook["run"]
         for hook in config["hooks"]["enter"]
     )
 
@@ -232,7 +242,7 @@ def test_fresh_bootstrap_activates_project_only_and_preserves_other_hooks(
     project = render(fixture, hooks=hooks)
     config = tomllib.loads((project / "mise.toml").read_text())
     assert_task(config)
-    enter = "\n".join(hook["script"] for hook in config["hooks"]["enter"])
+    enter = "\n".join(hook["run"] for hook in config["hooks"]["enter"])
     for script in ("link-agentfiles.sh", "materialize-env.sh", "codegraph.sh"):
         assert script in enter
     assert (".agents/hooks/sync.py" in enter) is hooks

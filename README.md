@@ -77,7 +77,9 @@ copier copy /path/to/CommonProject my-new-project
 ## Skills
 
 Install mise and Node.js 24 or newer. The generated project has one explicit
-`mise run skills:sync` task, pinned to `npm:@delorenj/skillex@0.1.1`. It passes
+`mise run skills:sync` task, pinned to `npm:@delorenj/skillex@0.1.1` with
+`allow_low_downloads = true` (mise's npm `minimumPackageAge` gate otherwise
+refuses a release younger than 30 days) and `node = "24"`. It passes
 `--scope project --project '{{config_root}}'`, including when invoked from a
 nested directory. Global selections may be inherited, but this task writes only
 the selected project and Skillex's private XDG receipt state.
@@ -89,11 +91,17 @@ Configure a canonical Skillex registry first, for example with
 fails bootstrap with Skillex's actionable finding instead of silently skipping
 activation. The template never clones or copies an alternative skill engine.
 
-Edit `.agents/skills.json` and run the task to apply later selection changes.
-Copier refresh preserves existing manifest bytes, including inheritance,
-exclusions, and an active pack. Skillex preserves foreign/BMAD content and refuses
-conflicting roots; use `skillex migrate` explicitly for legacy layouts. Unrelated
-agent hooks remain independently configured.
+Edit `.agents/skills.json` and run `mise run skills:sync` to apply later
+selection changes. Do not type bare `skillex sync` in a shell, where `skillex`
+can resolve to the retired Python reconciler. Copier refresh preserves existing
+manifest bytes, including inheritance, exclusions, and an active pack. Skillex
+preserves foreign/BMAD content and refuses conflicting roots. `pj migrate`
+relocates CLI-root skill entries losslessly into `.agents/skills` so each root
+can become the alias, but never claims foreign or installer-owned skills and
+never deletes content that is not a proven duplicate. For what remains, preview
+with `pj skills migrate --project "<repo>"` and apply the reviewed plan with
+`pj skills migrate --project "<repo>" --apply` (the Skillex CLI bundled with
+pjangler). Unrelated agent hooks remain independently configured.
 
 For template acceptance, install Copier and pytest, then run
 `bash .scripts/test-template.sh`. Tests render current tracked template bytes in
