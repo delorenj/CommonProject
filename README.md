@@ -77,7 +77,7 @@ copier copy /path/to/CommonProject my-new-project
 ## Skills
 
 Install mise and Node.js 24 or newer. The generated project has one explicit
-`mise run skills:sync` task, pinned to `npm:@delorenj/skillex@0.1.1` with
+`mise run skills:sync` task, pinned to `npm:@delorenj/skillex@0.1.2` with
 `allow_low_downloads = true` (mise's npm `minimumPackageAge` gate otherwise
 refuses a release younger than 30 days) and `node = "24"`. It passes
 `--scope project --project '{{config_root}}'`, including when invoked from a
@@ -106,7 +106,7 @@ pjangler). Unrelated agent hooks remain independently configured.
 For template acceptance, install Copier and pytest, then run
 `bash .scripts/test-template.sh`. Tests render current tracked template bytes in
 canonical `/tmp` fixtures and install the pinned npm release. Before publication,
-set `SKILLEX_TEST_TARBALL=/absolute/path/delorenj-skillex-0.1.1.tgz` to test a
+set `SKILLEX_TEST_TARBALL=/absolute/path/delorenj-skillex-0.1.2.tgz` to test a
 prebuilt release candidate without rebuilding or depending on a source checkout.
 
 ## Template Questions
