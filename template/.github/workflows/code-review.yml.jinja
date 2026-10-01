@@ -8,6 +8,12 @@
 # Until it is set the job runs and fails at the action step — see the "Code
 # Review" section of the CommonProject README.
 #
+# Runner: self-hosted on big-chungus ONLY. GitHub-hosted minutes are billed and
+# the budget is $0, so a hosted label (`ubuntu-latest`, `macos-*`) just sits
+# unstarted. Org repos get the AutomaticAI-io runners; a personal-account repo
+# needs its own repo-level runner (procedure: delonet-conventions skill,
+# references/ci-runners.md).
+#
 # Trigger: `pull_request`, deliberately NOT `pull_request_target`. The latter
 # would hand repo secrets to code from forked PRs; nothing here needs it.
 #
@@ -23,7 +29,7 @@ on:
 
 jobs:
   claude-review:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, delonet]
     permissions:
       contents: read
       pull-requests: read

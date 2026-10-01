@@ -194,6 +194,14 @@ metered Anthropic API key. Provide it either way:
 
 Generate the token with `claude setup-token` (Claude Code CLI).
 
+### Runner: self-hosted only
+
+The job runs on `[self-hosted, Linux, delonet]`, never a GitHub-hosted label:
+hosted minutes are billed and the budget is $0. Repos in the `AutomaticAI-io`
+org use the org runners. A personal-account repo (`delorenj/...`) cannot see
+them and needs a repo-level runner on big-chungus, registered with the
+procedure in the `delonet-conventions` skill (`references/ci-runners.md`).
+
 The job requests exactly `contents: read`, `pull-requests: read`,
 `issues: read`, and `id-token: write` — read-only on the repo, with OIDC for the
 action's own auth exchange.
