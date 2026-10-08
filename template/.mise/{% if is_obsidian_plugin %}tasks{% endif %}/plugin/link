@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#MISE description="Symlink this plugin into an Obsidian vault: plugin:link [vault] (default: $OBSIDIAN_VAULT)"
+#MISE tools={node="24"}
+# Obsidian loads a plugin from <vault>/.obsidian/plugins/<manifest id>/, reading
+# main.js, manifest.json and styles.css. Linking the repo there means every
+# `npm run dev` rebuild is live after a plugin reload (or instantly with the
+# Hot-Reload community plugin). Replaces only a symlink it can recognise as a
+# link; a real directory at the destination is left alone.
+set -euo pipefail
+
+root="${MISE_CONFIG_ROOT:-$(pwd)}"
+vault="${1:-${OBSIDIAN_VAULT:-}}"
+[ -n "$vault" ] || { echo "plugin:link: pass the vault path or set OBSIDIAN_VAULT" >&2; exit 2; }
+[ -d "$vault/.obsidian" ] || { echo "plugin:link: $vault is not an Obsidian vault (no .obsidian/)" >&2; exit 2; }
+
+id="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).id' "$root/manifest.json")"
+[ -n "$id" ] || { echo "plugin:link: manifest.json has no id" >&2; exit 1; }
+
+dest="$vault/.obsidian/plugins/$id"
+if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+  echo "plugin:link: $dest already exists and is not a symlink; remove it first" >&2
+  exit 1
+fi
+mkdir -p "$vault/.obsidian/plugins"
+ln -sfn "$root" "$dest"
+echo "linked $dest -> $root"
+[ -f "$root/main.js" ] || echo "plugin:link: no main.js yet; run npm run dev (or npm run build)" >&2

@@ -149,7 +149,7 @@ def fixture(installed):
         }
 
 
-def render(fixture, *, hooks=False, project=None):
+def render(fixture, *, hooks=False, project=None, data=()):
     project = project or fixture["root"] / "project with spaces"
     project.mkdir(exist_ok=True)
     (project / ".gitignore").write_text("# Existing project rule\nproject-cache/\n")
@@ -164,6 +164,7 @@ def render(fixture, *, hooks=False, project=None):
             "project_name=Fixture Project",
             "--data",
             f"agent_hooks_layer={str(hooks).lower()}",
+            *(arg for pair in data for arg in ("--data", pair)),
             str(fixture["source"]),
             str(project),
         ],
@@ -335,3 +336,79 @@ def test_collision_refuses_without_changing_selection_or_skill_content(fixture):
 
 def test_root_dogfood_uses_the_same_explicit_task():
     assert_task(tomllib.loads((ROOT / "mise.toml").read_text()))
+
+
+PLUGIN_FILES = (
+    "manifest.json",
+    "versions.json",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "esbuild.config.mjs",
+    "eslint.config.mts",
+    "version-bump.mjs",
+    "styles.css",
+    ".editorconfig",
+    ".npmrc",
+    "src/main.ts",
+    "src/settings.ts",
+    ".github/workflows/lint.yml",
+    ".github/workflows/release.yml",
+    ".mise/tasks/plugin/link",
+)
+
+
+def test_base_render_carries_no_obsidian_plugin_paths(fixture):
+    project = render(fixture)
+    for rel in PLUGIN_FILES:
+        assert not (project / rel).exists(), rel
+    assert not (project / "src").exists()
+    assert not (project / ".mise/tasks").exists()
+    answers = (project / ".copier-answers.yml").read_text()
+    assert "project_type: base" in answers
+
+
+def test_obsidian_plugin_renders_the_sample_plugin_over_the_base(fixture):
+    project = render(
+        fixture,
+        data=(
+            "project_type=obsidian-plugin",
+            "project_slug=obsidian-tag-wrangler",
+            "project_description=Wrangle tags",
+        ),
+    )
+    for rel in PLUGIN_FILES:
+        assert (project / rel).exists(), rel
+    # The base skeleton is still all there.
+    config = tomllib.loads((project / "mise.toml").read_text())
+    assert_task(config)
+    assert (project / ".github/workflows/code-review.yml").is_file()
+    manifest = json.loads((project / "manifest.json").read_text())
+    assert manifest["id"] == "tag-wrangler"
+    assert manifest["name"] == "Fixture Project"
+    assert manifest["description"] == "Wrangle tags."
+    assert json.loads((project / "package.json").read_text())["name"] == "obsidian-tag-wrangler"
+    main = (project / "src/main.ts").read_text()
+    assert "export default class TagWranglerPlugin extends Plugin" in main
+    assert "MyPlugin" not in main and "SampleModal" not in main
+    release = (project / ".github/workflows/release.yml").read_text()
+    assert "${{ secrets.GITHUB_TOKEN }}" in release
+    assert "ubuntu-latest" not in release
+    assert "## Obsidian community plugin" in (project / "AGENTS.md").read_text()
+    ignore = (project / ".gitignore").read_text().split("\n")
+    for line in ("project-cache/", "/.agents/skills", "node_modules/", "/main.js", "*.map", "/data.json"):
+        assert line in ignore, line
+    assert "project_type: obsidian-plugin" in (project / ".copier-answers.yml").read_text()
+    assert os.access(project / ".mise/tasks/plugin/link", os.X_OK)
+
+
+def test_obsidian_plugin_rerender_keeps_the_plugin_seed_files(fixture):
+    data = ("project_type=obsidian-plugin",)
+    project = render(fixture, data=data)
+    (project / "src/main.ts").write_text("// real plugin code\n")
+    manifest = json.loads((project / "manifest.json").read_text())
+    manifest["version"] = "2.3.4"
+    (project / "manifest.json").write_text(json.dumps(manifest))
+    render(fixture, project=project, data=data)
+    assert (project / "src/main.ts").read_text() == "// real plugin code\n"
+    assert json.loads((project / "manifest.json").read_text())["version"] == "2.3.4"

@@ -125,6 +125,33 @@ The template asks for:
 - **Project Name**
 - **Project Identifier**: 2+ character ticket prefix (e.g., HOLO, VERN)
 
+### Project Type
+
+- **`project_type`**: `base` (default) or `obsidian-plugin`. Recorded in
+  `.copier-answers.yml`; pjangler passes it (`pj init --obsidian-plugin`) and
+  records it as `template.commonproject.project_type` in `.project.json`.
+
+`obsidian-plugin` renders the whole base skeleton plus an Obsidian community
+plugin vendored from the canonical
+[obsidian-sample-plugin](https://github.com/obsidianmd/obsidian-sample-plugin)
+(@ `07ceb81d`, 2026-08-02). Differences from upstream, all deliberate:
+
+- `manifest.json` and `package.json` carry the project's identity. The plugin `id`
+  and `name` drop "obsidian" and a trailing "plugin", because the community
+  catalog rejects both.
+- `src/` classes are named after the plugin (`TagWranglerPlugin`, …). The sample
+  `registerInterval`/global click demos are removed, because
+  `eslint-plugin-obsidianmd` fails the starter's own names and snippets.
+- `eslint.config.mts` also ignores the CommonProject tooling (`.*`, `_bmad*`, `agents`).
+- The workflows run on `[self-hosted, Linux, delonet]`. Release attestation runs
+  only on public repos.
+- `package.json` is `private` and `UNLICENSED`. Pick a license before you submit
+  to the catalog.
+- `mise run plugin:link [vault]` symlinks the repo into
+  `$OBSIDIAN_VAULT/.obsidian/plugins/<id>`.
+- Seed files (`package*.json`, `manifest.json`, `versions.json`, `src/**`, …) are
+  in `_skip_if_exists`, so a re-render never resets them.
+
 ## Post-Generation Steps
 
 > **Tip:** If you used `mise run init-project`, most of this is done automatically!
@@ -236,11 +263,17 @@ copier copy . /tmp/test-project --overwrite
 
 ### Adding New Project Types
 
-1. Add to `project_type` choices in `copier.yml`
-2. Update conditional sections in `template/*.jinja` files
-3. Add type-specific questions if needed
-4. Update GOD.md template with type-specific content
-5. Add test case in `.scripts/test-template.sh`
+1. Add the type to the `project_type` choices in `copier.yml`. Keep it an asked
+   question: `when: false` answers are never recorded.
+2. Add a derived `is_<type>` bool. Name every type-only path
+   `{% if is_<type> %}NAME{% endif %}`, directories included, so a base render
+   never sees it. Never ship a bare `.gitignore` or `.npmrc` name, because npm pack
+   drops them from pjangler's tarball. Put shared-file differences in
+   `{%- if is_<type> %}` blocks, and keep them out of `mise.toml.jinja` (see the
+   note in pjangler's `evaluateMiseConditionals`).
+3. Add the type to `PROJECT_TYPES` (and its sentinel files) in pjangler's
+   `src/project/index.ts`, plus a CLI flag.
+4. Add a render case in `tests/test_skillex_integration.py`.
 
 ### Adding Language Support
 

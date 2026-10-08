@@ -1,0 +1,29 @@
+# Build + lint the Obsidian plugin on every push and pull request.
+#
+# Adapted from obsidianmd/obsidian-sample-plugin's lint.yml. The one deliberate
+# change is the runner: self-hosted on big-chungus, never a GitHub-hosted label.
+# Hosted minutes are billed on private repos and the budget is $0. A
+# personal-account repo needs its own repo-level runner (delonet-conventions
+# skill, references/ci-runners.md).
+name: Plugin build
+
+on:
+    push:
+        branches: ['**']
+    pull_request:
+        branches: ['**']
+
+jobs:
+    build:
+        runs-on: [self-hosted, Linux, delonet]
+
+        steps:
+            - uses: actions/checkout@v6
+            - name: Use Node.js 24
+              uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: 'npm'
+            - run: npm ci
+            - run: npm run build --if-present
+            - run: npm run lint

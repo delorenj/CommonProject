@@ -37,7 +37,9 @@ Root-level files describe the template itself. Files in `template/` are what Cop
 
 ### Template Variables
 
-Only two questions asked: `project_name` and `project_description`. Everything else is derived or automated:
+Questions: `project_name`, `project_description`, `ticket_provider` and
+`project_type` (`base` | `obsidian-plugin`; pjangler always passes the last two
+via `--data`). Everything else is derived or automated:
 - `project_slug` derived from project_name
 - Plane project created via API in post-generation task
 - `.gitignore` gets only the portable CommonProject contract; the developer's

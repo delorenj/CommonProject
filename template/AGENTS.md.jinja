@@ -5,3 +5,70 @@
 ## Overview
 
 __TODO__
+{%- if is_obsidian_plugin %}
+
+## Obsidian community plugin
+
+This project is an Obsidian community plugin, scaffolded from the canonical
+[obsidian-sample-plugin](https://github.com/obsidianmd/obsidian-sample-plugin).
+TypeScript in `src/` is bundled by esbuild into `main.js`, which Obsidian loads.
+
+- Package manager: **npm** (`package.json` scripts, `package-lock.json`). Never bun or pnpm.
+- Bundler: **esbuild** (`esbuild.config.mjs`). Types come from the `obsidian` package.
+- Release artifacts: `main.js`, `manifest.json`, and `styles.css` (optional).
+
+### Commands
+
+```bash
+npm install          # dev dependencies, pinned by the committed package-lock.json
+npm run dev          # watch build -> main.js (inline sourcemaps)
+npm run build        # type-check, then production build
+npm run lint         # eslint with eslint-plugin-obsidianmd
+mise run plugin:link # symlink this repo into $OBSIDIAN_VAULT/.obsidian/plugins/<id>
+```
+
+Reload Obsidian (or use the Hot-Reload plugin) and enable the plugin under
+**Settings → Community plugins**.
+
+### Layout
+
+- `src/main.ts` stays small: plugin lifecycle (`onload`/`onunload`) and registration only.
+- Feature logic goes in focused modules under `src/` (`settings.ts`, `commands/`, `ui/`, `utils/`).
+- Never commit `node_modules/`, `main.js`, `*.map`, or the vault's `data.json`.
+- Bundle every runtime dependency into `main.js`; keep dependencies small and browser-compatible.
+
+### Manifest rules (`manifest.json`)
+
+- `id` is stable API: never change it after release. It must not contain "obsidian",
+  and for local development it must match the plugin folder name in the vault.
+- `version` is SemVer `x.y.z`; keep `minAppVersion` accurate when you use newer APIs.
+- `isDesktopOnly` must be `true` if you use Node or Electron APIs.
+- Canonical checks: https://github.com/obsidianmd/obsidian-releases/blob/master/.github/workflows/validate-plugin-entry.yml
+
+### Versioning and releases
+
+- `npm version patch|minor|major` is the release step. It bumps `package.json`, and
+  `version-bump.mjs` syncs `manifest.json` and `versions.json` (plugin version → minimum
+  app version). It commits, then tags the bare version: no leading `v`, because `.npmrc`
+  sets `tag-version-prefix=""`.
+- `mise run version:bump` keeps the same three files in step without committing or tagging.
+- Push the tag. `.github/workflows/release.yml` drafts the GitHub release with `main.js`,
+  `manifest.json` and `styles.css` attached.
+- The community catalog requires a public repo and a LICENSE; pick one before submitting.
+
+### Plugin conventions
+
+- Add commands with `this.addCommand(...)` and stable IDs; never rename a released ID.
+- Persist settings with `this.loadData()` / `this.saveData()`, with defaults in `settings.ts`.
+- Register every DOM event, workspace event, and interval through `this.register*`,
+  so the plugin unloads without leaking listeners.
+- Keep `onload` light: defer heavy work, debounce vault events, batch disk access.
+- Stay inside the vault, make no network calls without a user-visible reason, and never
+  fetch or eval remote code. These are Obsidian's developer policies, and review enforces them.
+- UI copy uses sentence case, short imperative labels, and **Settings → Community plugins**
+  style arrow navigation.
+
+References: [API docs](https://docs.obsidian.md) ·
+[Plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines) ·
+[Developer policies](https://docs.obsidian.md/Developer+policies)
+{%- endif %}

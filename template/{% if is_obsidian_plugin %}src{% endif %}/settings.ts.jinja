@@ -1,0 +1,38 @@
+import { App, PluginSettingTab, Setting } from 'obsidian';
+import {{ plugin_class }}Plugin from './main';
+
+export interface {{ plugin_class }}Settings {
+	exampleSetting: string;
+}
+
+export const DEFAULT_SETTINGS: {{ plugin_class }}Settings = {
+	exampleSetting: 'default',
+};
+
+export class {{ plugin_class }}SettingTab extends PluginSettingTab {
+	plugin: {{ plugin_class }}Plugin;
+
+	constructor(app: App, plugin: {{ plugin_class }}Plugin) {
+		super(app, plugin);
+		this.plugin = plugin;
+	}
+
+	display(): void {
+		const { containerEl } = this;
+
+		containerEl.empty();
+
+		new Setting(containerEl)
+			.setName('Settings #1')
+			.setDesc("It's a secret")
+			.addText((text) =>
+				text
+					.setPlaceholder('Enter your secret')
+					.setValue(this.plugin.settings.exampleSetting)
+					.onChange(async (value) => {
+						this.plugin.settings.exampleSetting = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+	}
+}

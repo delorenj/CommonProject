@@ -43,11 +43,99 @@ ticket_provider:
     Plane: plane
     Trello: trello
 
+# What this project is. `base` is the generic skeleton below and nothing else.
+# `obsidian-plugin` (`pj init --obsidian-plugin`) adds an Obsidian community
+# plugin on top of it, vendored from the canonical starter
+# obsidianmd/obsidian-sample-plugin @ 07ceb81d (2026-08-02): npm + esbuild +
+# TypeScript, manifest.json/versions.json, eslint-plugin-obsidianmd, and its
+# build/release workflows moved to the self-hosted runners.
+#
+# Every type-only path under template/ carries `{% if is_obsidian_plugin %}`
+# in its NAME (directories included), so it does not exist in a base render.
+# Never name one a bare `.gitignore`/`.npmrc`: npm pack drops those from the
+# published pjangler tarball.
+#
+# A real question on purpose, not `when: false`. Copier records only asked
+# questions in .copier-answers.yml; a hidden type would be forgotten, and a
+# re-copy would silently re-render the shared files as `base`. `--defaults`
+# never prompts for it, and pjangler always passes it with --data.
+project_type:
+  type: str
+  help: What kind of project is this?
+  default: base
+  choices:
+    CommonProject base: base
+    Obsidian community plugin: obsidian-plugin
+
 # --- Derived (never asked) ---
 
 project_slug:
   type: str
   default: "{{ project_name | lower | replace(' ', '-') | replace('_', '-') }}"
+  when: false
+
+is_obsidian_plugin:
+  type: bool
+  default: "{{ project_type == 'obsidian-plugin' }}"
+  when: false
+
+# Obsidian manifest identity (obsidian-plugin only). The catalog rejects a
+# plugin id or name containing "obsidian" and frowns on a trailing "plugin",
+# and the id must equal the plugin's folder name in a vault, so both are the
+# project's own identity with those affixes dropped:
+# "obsidian-tag-wrangler" -> id "tag-wrangler".
+plugin_id:
+  type: str
+  default: >-
+    {%- set id = project_slug | lower | regex_replace('[^a-z0-9-]+', '-') | replace('obsidian', '') | regex_replace('-+', '-') -%}
+    {%- set id = id.strip('-') -%}
+    {%- if id.endswith('-plugin') %}{% set id = id[:-7] %}{% endif -%}
+    {{ id or 'plugin' }}
+  when: false
+
+# A slug-style project name ("obsidian-tag-wrangler") reads as words in the
+# Obsidian UI: separators become spaces and an all-lowercase name is
+# title-cased ("Tag Wrangler"); a name with its own casing keeps it.
+plugin_name:
+  type: str
+  default: >-
+    {%- set name = project_name | regex_replace('(?i)obsidian', ' ') | regex_replace('[-_:.]+', ' ') | regex_replace('\\s+', ' ') | trim -%}
+    {%- set name = name | regex_replace('(?i)\\s*\\bplugin$', '') | trim -%}
+    {%- if name == name | lower %}{% set name = name | title %}{% endif -%}
+    {{ name or project_name }}
+  when: false
+
+# TypeScript identifier stem for src/: "tag-wrangler" -> TagWranglerPlugin,
+# TagWranglerSettings, TagWranglerSettingTab, TagWranglerModal. The starter's
+# own names (MyPlugin, SampleModal, ...) fail eslint-plugin-obsidianmd's
+# sample-names rule, and a "Plugin" stem would declare PluginSettingTab over
+# Obsidian's own, so those stems get a "Project" suffix.
+plugin_class:
+  type: str
+  default: >-
+    {%- set ns = namespace(name='') -%}
+    {%- for word in plugin_id.replace('_', '-').replace('.', '-').split('-') -%}
+    {%- set ns.name = ns.name ~ (word | capitalize) -%}
+    {%- endfor -%}
+    {%- if not ns.name or ns.name[0] in '0123456789' %}{% set ns.name = 'Plugin' ~ ns.name %}{% endif -%}
+    {%- if ns.name in ['My', 'Sample', 'Plugin'] %}{% set ns.name = ns.name ~ 'Project' %}{% endif -%}
+    {{ ns.name }}
+  when: false
+
+# The catalog wants a sentence: it must end in punctuation.
+plugin_description:
+  type: str
+  default: >-
+    {%- set text = project_description | trim -%}
+    {%- if text and text[-1] not in '.?!)' %}{% set text = text ~ '.' %}{% endif -%}
+    {{ text or 'Describe what this plugin does.' }}
+  when: false
+
+# pjangler passes the operator's git user.name; a bare copier render leaves it
+# for the author to fill in.
+plugin_author:
+  type: str
+  default: ""
   when: false
 
 # Board binding — supplied by init-project.sh's --data-file after the board is
@@ -111,6 +199,19 @@ _skip_if_exists:
   # Selection is project intent, not generated output. A refresh must preserve
   # inheritance choices, exclusions, and active packs byte-for-byte.
   - ".agents/skills.json"
+  # obsidian-plugin seed files: rendered once at creation, owned by the plugin
+  # after that. A forced re-render must not reset a bumped manifest version or
+  # replace real plugin code with the sample. (Paths a base render never
+  # produces, so this is inert for base projects.)
+  - "package.json"
+  - "package-lock.json"
+  - "manifest.json"
+  - "versions.json"
+  - "styles.css"
+  - "tsconfig.json"
+  - "esbuild.config.mjs"
+  - "eslint.config.mts"
+  - "src/**"
 
 # --- Post-generation tasks ---
 #
@@ -124,7 +225,7 @@ _tasks:
   # byte and append only the small CommonProject-owned contract when absent.
   # Machine-local backup/editor/CLI exclusions belong in the user's global
   # ignore; `.agents/` is the sole canonical agent-config tree in Git.
-  - "touch .gitignore; if [ -s .gitignore ] && [ -n \"$(tail -c 1 .gitignore)\" ]; then printf '\\n' >> .gitignore; fi; grep -Fqx '# CommonProject repository contract' .gitignore 2>/dev/null || printf '%s\\n' '# CommonProject repository contract' >> .gitignore; for pattern in '.env' '.env.*' '!.env.op' '/.agents/local.json' '/.agents/skills'; do grep -Fqx -- \"$pattern\" .gitignore 2>/dev/null || printf '%s\\n' \"$pattern\" >> .gitignore; done"
+  - "touch .gitignore; if [ -s .gitignore ] && [ -n \"$(tail -c 1 .gitignore)\" ]; then printf '\\n' >> .gitignore; fi; grep -Fqx '# CommonProject repository contract' .gitignore 2>/dev/null || printf '%s\\n' '# CommonProject repository contract' >> .gitignore; for pattern in '.env' '.env.*' '!.env.op' '/.agents/local.json' '/.agents/skills'{% if is_obsidian_plugin %} 'node_modules/' '/main.js' '*.map' '/data.json'{% endif %}; do grep -Fqx -- \"$pattern\" .gitignore 2>/dev/null || printf '%s\\n' \"$pattern\" >> .gitignore; done"
   # PJAN-82: use the managed script, which refuses to replace a REAL CLAUDE.md.
   # `ln -sf` cannot distinguish a stale link it owns from a hand-written file it
   # must not touch, so a re-render into a live project destroyed the file and
