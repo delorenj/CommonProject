@@ -231,8 +231,10 @@ _tasks:
   # must not touch, so a re-render into a live project destroyed the file and
   # reported success.
   - "./.mise/scripts/link-agentfiles.sh \"$(pwd)\""
-  # One explicit project activation after rendering. Trust only this generated
-  # config for this process; do not persist trust or execute enter/watch hooks.
-  - "MISE_TRUSTED_CONFIG_PATHS=\"$(pwd)/mise.toml\" mise run skills:sync"
+  # Skill activation is NOT a copier task: the skills:sync mise task retired
+  # with the 2026-10-10 skill-operation-task policy. `pj init` provisions the
+  # fresh project's skills itself through the bundled skillex core in its
+  # post-render parity pass; operators invoke `pj skills …` / `skillex …`
+  # directly afterwards.
   # Stamp the repo's absolute path into .project.json (the SOT) post-render.
   - "python3 -c \"import json,os,pathlib; p=pathlib.Path('.project.json'); d=json.loads(p.read_text()); d['repo_path']=os.getcwd(); p.write_text(json.dumps(d,indent=2)+chr(10))\""
