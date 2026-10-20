@@ -43,6 +43,10 @@ run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall 
 [[watch_files]]
 patterns = ["AGENTS.md"]
 task = "link:agentfiles"
+
+[[watch_files]]
+patterns = [".env.op"]
+task = "env:materialize"
 {% if agent_hooks_layer %}
 # Re-fan-out the agent hooks whenever the single source of truth changes.
 [[watch_files]]
@@ -52,6 +56,10 @@ task = "hooks:sync"
 [tasks."link:agentfiles"]
 description = "Symlink all agent files to AGENTS.md"
 run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/link-agentfiles.sh' '{% raw %}{{config_root}}{% endraw %}'"
+
+[tasks."env:materialize"]
+description = "Inject .env.op into .env"
+run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/materialize-env.sh'"
 {% if agent_hooks_layer %}
 # --- Project-scoped agent hooks (see .agents/hooks/README.md) ---
 
