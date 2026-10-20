@@ -109,6 +109,28 @@ canonical `/tmp` fixtures and install the pinned npm release. Before publication
 set `SKILLEX_TEST_TARBALL=/absolute/path/delorenj-skillex-0.1.2.tgz` to test a
 prebuilt release candidate without rebuilding or depending on a source checkout.
 
+## Core tasks
+
+Every generated project ships `[tasks."docs:sync"]` in its `mise.toml` —
+unconditional, no template question. It copies Markdown modified in the last
+24 hours from `docs/`, `_bmad-output/`, and the repo root into a dated
+snapshot at `Projects/<project_id>/<date>/` in an Obsidian vault, preserving
+relative paths and any notes already in that day's folder, then writes a
+`_docs-sync/Index.md` with percent-encoded links and opens it in Obsidian.
+
+```bash
+mise run docs:sync                      # last 24 hours, open the index
+mise run docs:sync --hours 72           # wider window
+mise run docs:sync --no-open            # headless (CI, SSH)
+mise run docs:sync --vault /path/to/vault
+```
+
+The vault defaults to `$VAULT`, then `$OBSIDIAN_VAULT`, then
+`~/code/DeLoDocs`, and must already exist and live outside the repository.
+`<project_id>` comes from the generated `.project.json` (the repo directory
+name for bare repos); the index heading uses `project_name`. The helper lives
+at `.mise/scripts/docs-sync.py` and works on macOS, Linux, and Windows.
+
 ## Template Questions
 
 The template asks for:

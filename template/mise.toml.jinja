@@ -78,3 +78,21 @@ run = "'{% raw %}{{config_root}}{% endraw %}/.agents/hooks/sync.py' --uninstall"
 [tasks."hindsight:setup"]
 description = "Provision this dev's shared project Hindsight key from 1Password into .env (op read; upserts those two keys, leaves the rest of .env intact)"
 run = "'{% raw %}{{config_root}}{% endraw %}/.mise/scripts/hindsight-setup.sh'"
+
+# Core task (unconditional): snapshot recent project Markdown into the
+# Obsidian vault under Projects/<project_id>/<date> and open its index.
+# {{config_root}} is raw-escaped like the hooks above so mise, not Jinja,
+# expands it at task runtime (and sh -c keeps the space-safe quoting).
+[tasks."docs:sync"]
+description = "Copy recent Markdown from docs/, _bmad-output/ and the repo root to the dated project vault folder and open its Obsidian index"
+usage = '''
+flag "--hours <hours>" default="24" help="Copy Markdown modified within this many hours"
+flag "--vault <vault>" default="" help="Existing Obsidian vault (defaults to VAULT, OBSIDIAN_VAULT, or ~/code/DeLoDocs)"
+flag "--no-open" help="Copy without opening Obsidian"
+'''
+run = '''
+set -- --hours "$usage_hours"
+if [ -n "$usage_vault" ]; then set -- "$@" --vault "$usage_vault"; fi
+if [ "$usage_no_open" = true ]; then set -- "$@" --no-open; fi
+python3 "{% raw %}{{config_root}}{% endraw %}/.mise/scripts/docs-sync.py" --root "{% raw %}{{config_root}}{% endraw %}" "$@"
+'''
