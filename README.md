@@ -224,24 +224,31 @@ on `pull_request` (`opened`, `synchronize`, `ready_for_review`, `reopened`). It
 deliberately does **not** use `pull_request_target`, which would expose repo
 secrets to code from forked PRs.
 
-### Required secret: `CLAUDE_CODE_OAUTH_TOKEN`
+### Required secret: `AUTOMATICAI_GATEWAY_TOKEN`
 
 **The workflow does nothing until this secret exists.** Without it the job still
 triggers, but the action has no credential and the run fails.
 
-`CLAUDE_CODE_OAUTH_TOKEN` is a long-lived Claude Code OAuth/session token — not a
-metered Anthropic API key. Provide it either way:
+The review calls Claude through the AutomaticAI gateway
+(`https://api.automaticai.io`) on the operator's personal subscription, never
+`api.anthropic.com` directly. `AUTOMATICAI_GATEWAY_TOKEN` is a per-repo gateway
+token scoped to the personal `claude-opus-5.5` and `claude-sonnet-5.5` routes,
+valid for 90 days. Mint and set it from `~/code/client-portal/gateway`:
 
-- **Org-level secret** (preferred): set it once on the GitHub org and grant the
-  new repo access. Generated repos inherit it with zero per-repo setup.
-- **Repo-level secret**: `Settings → Secrets and variables → Actions → New
-  repository secret`, name `CLAUDE_CODE_OAUTH_TOKEN`. Or from the CLI:
+```bash
+python3 ops/gateway-tokens.py mint <repo>-code-review --days 90 \
+  --models automaticai/personal/claude-opus-5.5 automaticai/personal/claude-sonnet-5.5
+op read 'op://DeLoSecrets/<item-id>/<repo>-code-review' \
+  | gh secret set AUTOMATICAI_GATEWAY_TOKEN -R <owner>/<repo>
+```
 
-  ```bash
-  gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
-  ```
-
-Generate the token with `claude setup-token` (Claude Code CLI).
+Renew with `gateway-tokens.py rotate <repo>-code-review` and the same pipe.
+Do not use `CLAUDE_CODE_OAUTH_TOKEN`: it authenticates against Anthropic
+directly and bypasses the gateway. The workflow's first step runs
+`.github/scripts/check-gateway-routing.sh`, which fails the job if the base URL,
+token, `--model` or any model slot stops pointing at the gateway, or if the
+action's `classify_inline_comments` / OIDC paths (both of which call Anthropic)
+come back.
 
 ### Runner: self-hosted only
 
@@ -252,8 +259,9 @@ them and needs a repo-level runner on big-chungus, registered with the
 procedure in the `delonet-conventions` skill (`references/ci-runners.md`).
 
 The job requests exactly `contents: read`, `pull-requests: read`,
-`issues: read`, and `id-token: write` — read-only on the repo, with OIDC for the
-action's own auth exchange.
+and `issues: read` — read-only on the repo. There is no `id-token: write`: the
+action uses the workflow's `GITHUB_TOKEN`, since its OIDC app-token exchange
+calls `api.anthropic.com`.
 
 ## Updating Existing Projects
 

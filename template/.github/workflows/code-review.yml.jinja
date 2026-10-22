@@ -3,10 +3,35 @@
 # Rendered unconditionally by the CommonProject template: every project pjangler
 # creates gets code review on day one, with no opt-in question to forget.
 #
-# Auth: the `CLAUDE_CODE_OAUTH_TOKEN` repo secret (or an org-level secret this
-# repo inherits). It is a long-lived OAuth/session token, NOT a metered API key.
-# Until it is set the job runs and fails at the action step — see the "Code
-# Review" section of the CommonProject README.
+# Every model call this review makes goes through the AutomaticAI gateway,
+# https://api.automaticai.io, on the operator's personal Claude subscription.
+# Nothing here talks to api.anthropic.com for inference (AAI-59; the pattern is
+# delorenj/heyma-obsidian 68a7810 and 1cd9f06).
+#
+# Auth: the `AUTOMATICAI_GATEWAY_TOKEN` repo secret, a scoped gateway token for
+# consumer `<repo>-code-review` (routes personal claude-opus-5.5 and
+# claude-sonnet-5.5 only). Until it is set the job runs and fails at the action
+# step. Mint it, then set it, from ~/code/client-portal/gateway:
+#   python3 ops/gateway-tokens.py mint <repo>-code-review --days 90 \
+#     --models automaticai/personal/claude-opus-5.5 automaticai/personal/claude-sonnet-5.5
+#   op read 'op://DeLoSecrets/<item-id>/<repo>-code-review' \
+#     | gh secret set AUTOMATICAI_GATEWAY_TOKEN -R <owner>/<repo>
+# It expires after 90 days; `gateway-tokens.py rotate` and the same pipe renew
+# it. The action passes it as ANTHROPIC_API_KEY, so Claude Code sends it as
+# `x-api-key` to ANTHROPIC_BASE_URL; the gateway accepts that header.
+#
+# Every model slot is pinned to a personal-account gateway route: the main loop
+# and the plugin's Opus agents to claude-opus-5.5, its Sonnet and Haiku agents
+# (and Claude Code's background helper) to claude-sonnet-5.5. The personal
+# account has no Haiku route, and a helper must not leave the account.
+#
+# Two action defaults would still reach Anthropic directly, so both are off:
+#   - classify_inline_comments: its post-step POSTs ANTHROPIC_API_KEY to a
+#     hard-coded Anthropic Messages endpoint (Haiku).
+#   - the GitHub App token exchange (via OIDC). The job uses the workflow's own
+#     GITHUB_TOKEN and needs no `id-token: write`.
+# `.github/scripts/check-gateway-routing.sh` runs first and fails the job if any
+# of this regresses.
 #
 # Runner: self-hosted on big-chungus ONLY. GitHub-hosted minutes are billed and
 # the budget is $0, so a hosted label (`ubuntu-latest`, `macos-*`) just sits
@@ -16,6 +41,7 @@
 #
 # Trigger: `pull_request`, deliberately NOT `pull_request_target`. The latter
 # would hand repo secrets to code from forked PRs; nothing here needs it.
+# `workflow_dispatch` reviews an existing PR on demand (and proves the route).
 #
 # NOTE FOR TEMPLATE MAINTAINERS: this is a Copier `.jinja` file and GitHub
 # Actions expression syntax collides with Jinja's variable delimiters. Every
@@ -26,6 +52,11 @@ name: Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Pull request number to review'
+        required: true
 
 jobs:
   claude-review:
@@ -34,7 +65,10 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
-      id-token: write
+    env:
+      # Telemetry and error reporting are not inference, but they are the last
+      # direct Anthropic traffic a CI review would make.
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
 
     steps:
       - name: Checkout repository
@@ -42,13 +76,25 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Gateway routing guard
+        run: bash .github/scripts/check-gateway-routing.sh
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_BASE_URL: https://api.automaticai.io
+          ANTHROPIC_DEFAULT_OPUS_MODEL: automaticai/personal/claude-opus-5.5
+          ANTHROPIC_DEFAULT_SONNET_MODEL: automaticai/personal/claude-sonnet-5.5
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: automaticai/personal/claude-sonnet-5.5
         with:
-          claude_code_oauth_token: {% raw %}${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}{% endraw %}
+          anthropic_api_key: {% raw %}${{ secrets.AUTOMATICAI_GATEWAY_TOKEN }}{% endraw %}
+          github_token: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
+          classify_inline_comments: 'false'
+          claude_args: '--model automaticai/personal/claude-opus-5.5'
+          settings: '{"effortLevel": "xhigh"}'
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review {% raw %}${{ github.repository }}/pull/${{ github.event.pull_request.number }}{% endraw %}'
+          prompt: '/code-review:code-review {% raw %}${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr }}{% endraw %}'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
