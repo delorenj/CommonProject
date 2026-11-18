@@ -30,16 +30,13 @@ project_description:
   help: One-line description
   default: ""
 
-# Ticket board provider for this project. The board itself is created by
-# init-project.sh (create-plane-project.sh) BEFORE copier runs; its identity is
-# threaded back in via plane_* below and persisted into .project.json so it is
-# the single source of truth shared with the hermes-agent template's agents.
+# Ticket board provider for this project. pjangler's init provisions supported
+# boards; the binding in .project.json is shared with Hermes agents.
 ticket_provider:
   type: str
   help: Ticket board provider this project's board lives in
   default: plane
   choices:
-    Linear: linear
     Plane: plane
     Trello: trello
 
