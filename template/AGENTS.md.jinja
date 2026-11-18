@@ -2,6 +2,16 @@
 
 {{ project_description }}
 
+## Ticket board
+
+The nearest `.project.json` `ticket_provider` block is the board binding and
+source of truth. Supported types are `plane` and `trello`. Before reading or
+writing tickets, resolve that type and use its matching adapter; an absent or
+legacy unsupported type must not be interpreted as Plane or sent to a provider.
+Plane-only lifecycle labels, scope commands, and Plane URLs do not apply to a
+Trello board. An unlinked board or unsupported operation must be reported, not
+guessed or written to another service.
+
 ## Overview
 
 __TODO__

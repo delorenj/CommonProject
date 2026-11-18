@@ -1,5 +1,7 @@
 {% if ticket_provider == 'plane' and plane_project_id -%}
 {% set board_url = plane_base ~ '/' ~ plane_workspace ~ '/projects/' ~ plane_project_id ~ '/issues/' -%}
+{% elif ticket_provider == 'trello' and plane_project_id -%}
+{% set board_url = 'https://trello.com/b/' ~ plane_project_id -%}
 {% else -%}
 {% set board_url = '' -%}
 {% endif -%}
@@ -10,7 +12,7 @@
   "repo_path": "",
   "ticket_provider": {
     "type": {{ ticket_provider | tojson }},
-    "workspace": {{ plane_workspace | tojson }},
+    "workspace": {{ (plane_workspace if ticket_provider == 'plane' else '') | tojson }},
     "identifier": {{ project_identifier | tojson }},
     "board_id": {{ plane_project_id | tojson }},
     "board_url": {{ board_url | tojson }}
