@@ -76,37 +76,37 @@ copier copy /path/to/CommonProject my-new-project
 
 ## Skills
 
-Install mise and Node.js 24 or newer. The generated project has one explicit
-`mise run skills:sync` task, pinned to `npm:@delorenj/skillex@0.1.2` with
-`allow_low_downloads = true` (mise's npm `minimumPackageAge` gate otherwise
-refuses a release younger than 30 days) and `node = "24"`. It passes
-`--scope project --project '{{config_root}}'`, including when invoked from a
-nested directory. Global selections may be inherited, but this task writes only
-the selected project and Skillex's private XDG receipt state.
+Install Node.js 24 or newer and the canonical Skillex CLI. **Skillex is never
+pinned**: every project, desk and test runs the one latest `skillex` (on a 33GOD
+host, the launcher in `~/.local/bin`, upgraded with
+`33god-platform/scripts/cli-launchers.py upgrade @delorenj/skillex`). A per-repo pin
+forks the skill engine, so the generated project has no `skills:sync` mise task and
+no `npm:@delorenj/skillex` tools entry (retired with the 2026-10-10
+skill-operation-task policy). `pj init` provisions a fresh project's skills through
+skillex in its post-render parity pass, and `pj migrate mise.config-root` removes a
+leftover task or pin from an older project.
 
-Copier runs that task once after rendering. It grants process-local trust to the
-rendered config; it does not persist mise trust or run enter/watch hooks.
 Configure a canonical Skillex registry first, for example with
 `PJ_SKILLS_REGISTRY_ROOT=/path/to/skillex`. A missing registry or invalid selection
-fails bootstrap with Skillex's actionable finding instead of silently skipping
-activation. The template never clones or copies an alternative skill engine.
+fails with Skillex's actionable finding instead of silently skipping activation.
+The template never clones or copies an alternative skill engine.
 
-Edit `.agents/skills.json` and run `mise run skills:sync` to apply later
-selection changes. Do not type bare `skillex sync` in a shell, where `skillex`
-can resolve to the retired Python reconciler. Copier refresh preserves existing
-manifest bytes, including inheritance, exclusions, and an active pack. Skillex
-preserves foreign/BMAD content and refuses conflicting roots. `pj migrate`
-relocates CLI-root skill entries losslessly into `.agents/skills` so each root
-can become the alias, but never claims foreign or installer-owned skills and
-never deletes content that is not a proven duplicate. For what remains, preview
-with `pj skills migrate --project "<repo>"` and apply the reviewed plan with
-`pj skills migrate --project "<repo>" --apply` (the Skillex CLI bundled with
-pjangler). Unrelated agent hooks remain independently configured.
+Edit `.agents/skills.json` and run `pj skills sync --scope project --project .`
+(or `skillex sync --scope project --project .`) to apply selection changes. A set is
+one `"set": "name"` string; the legacy `sets` array is refused (`pj skills normalize`
+converts it). Copier refresh preserves existing manifest bytes, including
+inheritance, exclusions, and an active pack. Skillex preserves foreign/BMAD content
+and refuses conflicting roots. `pj migrate` relocates CLI-root skill entries
+losslessly into `.agents/skills` so each root can become the alias, but never claims
+foreign or installer-owned skills and never deletes content that is not a proven
+duplicate. For what remains, preview with `pj skills migrate --project "<repo>"` and
+apply the reviewed plan with `pj skills migrate --project "<repo>" --apply`.
+Unrelated agent hooks remain independently configured.
 
 For template acceptance, install Copier and pytest, then run
 `bash .scripts/test-template.sh`. Tests render current tracked template bytes in
-canonical `/tmp` fixtures and install the pinned npm release. Before publication,
-set `SKILLEX_TEST_TARBALL=/absolute/path/delorenj-skillex-0.1.2.tgz` to test a
+canonical `/tmp` fixtures and install the latest npm release. Before publication,
+set `SKILLEX_TEST_TARBALL=/absolute/path/delorenj-skillex-<version>.tgz` to test a
 prebuilt release candidate without rebuilding or depending on a source checkout.
 
 ## Core tasks

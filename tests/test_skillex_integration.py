@@ -18,7 +18,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.1.2"
+# Never pinned: the tests run the latest published Skillex (or SKILLEX_TEST_TARBALL);
+# VERSION is read from the installed package.
+VERSION = ""
 
 
 def run(command, *, cwd, env):
@@ -49,7 +51,7 @@ def installed():
             "npm_config_cache": str(base / "npm-cache"),
         }
         Path(env["HOME"]).mkdir()
-        package = os.environ.get("SKILLEX_TEST_TARBALL", f"@delorenj/skillex@{VERSION}")
+        package = os.environ.get("SKILLEX_TEST_TARBALL", "@delorenj/skillex@latest")
         succeeded(
             run(
                 [
@@ -69,10 +71,9 @@ def installed():
             )
         )
         cli = prefix / "bin/skillex"
-        assert (
-            succeeded(run([str(cli), "--version"], cwd=base, env=env)).stdout.strip()
-            == VERSION
-        )
+        global VERSION
+        VERSION = succeeded(run([str(cli), "--version"], cwd=base, env=env)).stdout.strip()
+        assert VERSION
         yield base, node, mise, copier, prefix
 
 
@@ -210,17 +211,11 @@ def snapshot(root):
 
 def assert_task(config):
     tasks = config["tasks"]
-    assert [name for name in tasks if name.startswith("skills:")] == ["skills:sync"]
-    task = tasks["skills:sync"]
-    # allow_low_downloads approves this exact version past mise's npm
-    # minimumPackageAge gate; the plain string pin is refused by mise 2026.9.
-    assert task["tools"] == {
-        "npm:@delorenj/skillex": {"version": VERSION, "allow_low_downloads": True},
-        "node": "24",
-    }
-    assert task["description"] == "Reconcile this project's selected skills"
-    assert task["run"] == "skillex sync --scope project --project '{{config_root}}'"
-    assert not task.get("depends")
+    # skills:sync retired (2026-10-10 skill-operation-task policy) and Skillex is never
+    # pinned: no task or tools table may fork the canonical CLI.
+    assert [name for name in tasks if name.startswith("skills:")] == []
+    assert all("npm:@delorenj/skillex" not in str(task.get("tools", {})) for task in tasks.values())
+    assert "npm:@delorenj/skillex" not in str(config.get("tools", {}))
     assert all(
         watch.get("task") != "skills:sync" for watch in config.get("watch_files", [])
     )
